@@ -14,14 +14,34 @@
 
 ---
 
-## Quickstart (recommended)
+## Quickstart
 
+### Option 1: Download EXE (recommended for end users)
 1. Download the latest EXE: [Releases (latest)](https://github.com/Ch4r0ne/ARK-Ascended-Server-Manager/releases/latest)
 2. Start `ARK-ASA-Manager.exe`
 3. Run **First Install** once (**Administrator recommended**)
 4. Configure **Paths**, **Server Settings**, **Operations**
 5. Click **Start Server**
 6. Use **Stop Server (Safe)** for controlled shutdown (optional backup + baseline restore)
+
+### Option 2: Run from source (no installation required!)
+**Windows:**
+```bash
+# Just double-click this file:
+launch.bat
+
+# Or run in command line:
+python -m ark_asa_manager
+# Or:
+python RUN.py
+```
+
+**Linux/Mac:**
+```bash
+bash launch.sh
+# Or:
+python -m ark_asa_manager
+```
 
 > The tool is designed to do the safe thing by default: deterministic start-lines, safe stop sequencing, and config handling that prevents half-applied changes.
 

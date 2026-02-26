@@ -1,0 +1,391 @@
+"""
+Server tab - Server configuration and control panel.
+"""
+
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, simpledialog
+from typing import Optional
+import os
+
+from .base import BaseTab
+
+
+class ServerTab(BaseTab):
+    """Server configuration and management tab."""
+    
+    def build(self) -> None:
+        """Build the Server tab UI."""
+        self.frame.columnconfigure(0, weight=1)
+        self.frame.columnconfigure(1, weight=1)
+        
+        # --- Server Profiles Section ---
+        self._build_profiles_section()
+        
+        # --- Paths Section ---
+        self._build_paths_section()
+        
+        # --- Server Settings and Operations (side-by-side) ---
+        self._build_settings_and_ops_sections()
+        
+        # --- Update, Backup, and Auto-start Options ---
+        self._build_options_frame()
+    
+    def _build_profiles_section(self) -> None:
+        """Build the server profiles selector and management buttons."""
+        lf = ttk.LabelFrame(self.frame, text="Server Profiles", padding=10)
+        lf.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        lf.columnconfigure(1, weight=1)
+        
+        ttk.Label(lf, text="Active Server").grid(row=0, column=0, sticky="w")
+        
+        self.cmb_server_profile = ttk.Combobox(
+            lf,
+            textvariable=self.app.var_server_profile,
+            state="readonly",
+            values=[],
+        )
+        self.cmb_server_profile.grid(row=0, column=1, sticky="ew", padx=6)
+        self.cmb_server_profile.bind(
+            "<<ComboboxSelected>>",
+            lambda e: self.app._on_server_profile_selected()
+        )
+        
+        # Profile action buttons
+        profile_actions = ttk.Frame(lf)
+        profile_actions.grid(row=0, column=2, sticky="e")
+        
+        ttk.Button(
+            profile_actions,
+            text="Add",
+            command=self.app._add_server_profile
+        ).grid(row=0, column=0, padx=(0, 6))
+        
+        ttk.Button(
+            profile_actions,
+            text="Rename",
+            command=self.app._rename_server_profile
+        ).grid(row=0, column=1, padx=(0, 6))
+        
+        ttk.Button(
+            profile_actions,
+            text="Remove",
+            command=self.app._remove_server_profile
+        ).grid(row=0, column=2)
+    
+    def _build_paths_section(self) -> None:
+        """Build the paths configuration section (SteamCMD and Server directories)."""
+        lf = ttk.LabelFrame(self.frame, text="Paths", padding=10)
+        lf.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        lf.columnconfigure(1, weight=1)
+        lf.columnconfigure(4, weight=1)
+        
+        ttk.Label(lf, text="SteamCMD Directory").grid(row=0, column=0, sticky="w")
+        ttk.Entry(lf, textvariable=self.app.var_steamcmd_dir).grid(
+            row=0, column=1, sticky="ew", padx=6
+        )
+        ttk.Button(
+            lf,
+            text="Browse",
+            command=self.app._browse_steamcmd
+        ).grid(row=0, column=2)
+        
+        ttk.Label(lf, text="Server Install Directory").grid(
+            row=0, column=3, sticky="w", padx=(18, 0)
+        )
+        ttk.Entry(lf, textvariable=self.app.var_server_dir).grid(
+            row=0, column=4, sticky="ew", padx=6
+        )
+        ttk.Button(
+            lf,
+            text="Browse",
+            command=self.app._browse_server_dir
+        ).grid(row=0, column=5)
+    
+    def _build_settings_and_ops_sections(self) -> None:
+        """Build the server settings (left) and operations (right) side-by-side sections."""
+        # --- Server Settings (left column) ---
+        lf_server = ttk.LabelFrame(self.frame, text="Server Settings", padding=10)
+        lf_server.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
+        lf_server.columnconfigure(1, weight=1)
+        
+        vcmd = (self.app.root.register(self.app._validate_digits), "%P")
+        
+        # Map Preset
+        ttk.Label(lf_server, text="Map Preset").grid(row=0, column=0, sticky="w")
+        self.cmb_map = ttk.Combobox(
+            lf_server,
+            textvariable=self.app.var_map_preset,
+            state="readonly",
+        )
+        self.cmb_map.grid(row=0, column=1, sticky="ew", padx=6)
+        self.cmb_map.bind("<<ComboboxSelected>>", lambda e: self.app._sync_map_mode())
+        
+        # Custom Map Name
+        ttk.Label(lf_server, text="Custom Map Name").grid(row=1, column=0, sticky="w")
+        ttk.Entry(lf_server, textvariable=self.app.var_map_custom).grid(
+            row=1, column=1, sticky="ew", padx=6
+        )
+        
+        # Server Name
+        ttk.Label(lf_server, text="Server Name").grid(row=2, column=0, sticky="w")
+        ttk.Entry(lf_server, textvariable=self.app.var_server_name).grid(
+            row=2, column=1, sticky="ew", padx=6
+        )
+        
+        # Port settings
+        ttk.Label(lf_server, text="Port").grid(row=3, column=0, sticky="w")
+        ttk.Entry(
+            lf_server,
+            textvariable=self.app.var_port,
+            validate="key",
+            validatecommand=vcmd
+        ).grid(row=3, column=1, sticky="ew", padx=6)
+        
+        ttk.Label(lf_server, text="Query Port").grid(row=4, column=0, sticky="w")
+        ttk.Entry(
+            lf_server,
+            textvariable=self.app.var_query_port,
+            validate="key",
+            validatecommand=vcmd
+        ).grid(row=4, column=1, sticky="ew", padx=6)
+        
+        ttk.Label(lf_server, text="Max Players").grid(row=5, column=0, sticky="w")
+        ttk.Entry(
+            lf_server,
+            textvariable=self.app.var_max_players,
+            validate="key",
+            validatecommand=vcmd
+        ).grid(row=5, column=1, sticky="ew", padx=6)
+        
+        # Passwords
+        ttk.Label(lf_server, text="Join Password").grid(row=6, column=0, sticky="w")
+        ttk.Entry(lf_server, textvariable=self.app.var_join_password).grid(
+            row=6, column=1, sticky="ew", padx=6
+        )
+        
+        ttk.Label(lf_server, text="Admin Password (RCON/Admin)").grid(row=7, column=0, sticky="w")
+        ttk.Entry(lf_server, textvariable=self.app.var_admin_password).grid(
+            row=7, column=1, sticky="ew", padx=6
+        )
+        
+        # Mods
+        ttk.Label(lf_server, text="Mods (comma separated)").grid(
+            row=8, column=0, sticky="nw", pady=(6, 0)
+        )
+        mods_frame = ttk.Frame(lf_server)
+        mods_frame.grid(row=8, column=1, sticky="ew", padx=6, pady=(6, 0))
+        mods_frame.columnconfigure(0, weight=1)
+        
+        self.txt_mods = tk.Text(
+            mods_frame,
+            height=4,
+            wrap="none",
+            background=self.app.theme_colors["surface"],
+            foreground=self.app.theme_colors["text"],
+            insertbackground=self.app.theme_colors["text"],
+            selectbackground=self.app.theme_colors["accent_light"],
+            highlightthickness=1,
+            highlightbackground=self.app.theme_colors["border"],
+            highlightcolor=self.app.theme_colors["accent"],
+        )
+        self.txt_mods.grid(row=0, column=0, sticky="ew")
+        
+        xscroll = ttk.Scrollbar(mods_frame, orient="horizontal", command=self.txt_mods.xview)
+        xscroll.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        self.txt_mods.configure(xscrollcommand=xscroll.set)
+        
+        # Custom args
+        ttk.Label(lf_server, text="Custom Server Arguments (optional)").grid(
+            row=9, column=0, sticky="w", pady=(8, 0)
+        )
+        ttk.Entry(lf_server, textvariable=self.app.var_custom_start_args).grid(
+            row=9, column=1, sticky="ew", padx=6, pady=(8, 0)
+        )
+        
+        # --- Operations (right column) ---
+        lf_ops = ttk.LabelFrame(self.frame, text="Operations", padding=10)
+        lf_ops.grid(row=2, column=1, sticky="nsew", padx=5, pady=5)
+        lf_ops.columnconfigure(0, weight=1)
+        lf_ops.columnconfigure(1, weight=1)
+        lf_ops.columnconfigure(2, weight=1)
+        
+        # Control buttons
+        actions = ttk.Frame(lf_ops, padding=(0, 0, 0, 10))
+        actions.grid(row=0, column=0, columnspan=3, sticky="ew")
+        actions.columnconfigure(0, weight=1)
+        actions.columnconfigure(1, weight=1)
+        actions.columnconfigure(2, weight=1)
+        
+        self.btn_first_install = ttk.Button(
+            actions,
+            text="First Install",
+            command=self.app.first_install
+        )
+        self.btn_stop = ttk.Button(
+            actions,
+            text="Stop Server (Safe)",
+            command=self.app.stop_server_safe
+        )
+        self.btn_start = ttk.Button(
+            actions,
+            text="Start Server",
+            command=self.app.start_server
+        )
+        
+        self.btn_first_install.grid(row=0, column=0, padx=5, pady=(0, 6), sticky="ew")
+        self.btn_stop.grid(row=0, column=1, padx=5, pady=(0, 6), sticky="ew")
+        self.btn_start.grid(row=0, column=2, padx=5, pady=(0, 6), sticky="ew")
+        
+        self.btn_update_validate = ttk.Button(
+            actions,
+            text="Update / Validate",
+            command=self.app.update_validate
+        )
+        self.btn_update_restart = ttk.Button(
+            actions,
+            text="Update / Restart (Safe)",
+            command=self.app.update_and_restart_safe
+        )
+        self.btn_backup_now = ttk.Button(
+            actions,
+            text="Backup Now",
+            command=self.app.backup_now
+        )
+        
+        self.btn_update_validate.grid(row=1, column=0, padx=5, sticky="ew")
+        self.btn_update_restart.grid(row=1, column=1, padx=5, sticky="ew")
+        self.btn_backup_now.grid(row=1, column=2, padx=5, sticky="ew")
+    
+    def _build_options_frame(self) -> None:
+        """Build the update, backup, and auto-start options."""
+        options_frame = ttk.Frame(self.frame)
+        options_frame.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
+        options_frame.columnconfigure(0, weight=1)
+        options_frame.columnconfigure(1, weight=1)
+        
+        # Update frame (left)
+        update_frame = ttk.LabelFrame(options_frame, text="Update Options", padding=8)
+        update_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        update_frame.columnconfigure(1, weight=1)
+        
+        ttk.Checkbutton(
+            update_frame,
+            text="Validate on Update",
+            variable=self.app.var_validate_on_update
+        ).grid(row=0, column=0, sticky="w")
+        
+        ttk.Checkbutton(
+            update_frame,
+            text="Update on startup",
+            variable=self.app.var_update_on_startup
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        
+        self.chk_auto_update_restart = ttk.Checkbutton(
+            update_frame,
+            text="Auto Update & Restart",
+            variable=self.app.var_auto_update_restart,
+            command=self.app._sync_auto_update_scheduler
+        )
+        self.chk_auto_update_restart.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        
+        ttk.Label(update_frame, text="Schedule Time (HH:MM)").grid(
+            row=3, column=0, sticky="w", pady=(6, 0)
+        )
+        ttk.Entry(update_frame, textvariable=self.app.var_auto_update_time).grid(
+            row=3, column=1, sticky="ew", padx=6, pady=(6, 0)
+        )
+        
+        self.btn_auto_update_test = ttk.Button(
+            update_frame,
+            text="Test",
+            command=self.app.auto_update_test
+        )
+        self.btn_auto_update_test.grid(row=3, column=2, padx=(6, 0), pady=(6, 0))
+        
+        # Backup and misc (right)
+        other_frame = ttk.LabelFrame(options_frame, text="Backup & Startup", padding=8)
+        other_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        other_frame.columnconfigure(1, weight=1)
+        
+        self.chk_backup_on_stop = ttk.Checkbutton(
+            other_frame,
+            text="Backup on Stop",
+            variable=self.app.var_backup_on_stop,
+            command=self.app._sync_backup_label_texts
+        )
+        self.chk_backup_on_stop.grid(row=0, column=0, sticky="w")
+        
+        ttk.Label(other_frame, text="Backup Directory").grid(row=1, column=0, sticky="w")
+        ttk.Entry(other_frame, textvariable=self.app.var_backup_dir).grid(
+            row=1, column=1, sticky="ew", padx=6
+        )
+        ttk.Button(
+            other_frame,
+            text="Browse",
+            command=self.app._browse_backup_dir
+        ).grid(row=1, column=2, padx=(6, 0))
+        
+        ttk.Label(other_frame, text="Retention (count)").grid(
+            row=2, column=0, sticky="w"
+        )
+        vcmd = (self.app.root.register(self.app._validate_digits), "%P")
+        ttk.Entry(
+            other_frame,
+            textvariable=self.app.var_backup_retention,
+            validate="key",
+            validatecommand=vcmd
+        ).grid(row=2, column=1, sticky="ew", padx=6)
+        
+        ttk.Checkbutton(
+            other_frame,
+            text="Start server on app launch",
+            variable=self.app.var_auto_start_on_launch
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        
+        ttk.Checkbutton(
+            other_frame,
+            text="Hide GameAnalytics spam",
+            variable=self.app.var_hide_gameanalytics_console_logs,
+            command=self.app._sync_console_log_filter_state
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
+    
+    def on_selected(self) -> None:
+        """Called when tab is selected."""
+        pass
+    
+    def on_deselected(self) -> None:
+        """Called when tab is deselected."""
+        pass
+    
+    def collect_from_ui(self) -> dict:
+        """Collect server settings from UI."""
+        return {
+            "server_profile": self.app.var_server_profile.get(),
+            "steamcmd_dir": self.app.var_steamcmd_dir.get(),
+            "server_dir": self.app.var_server_dir.get(),
+            "map_preset": self.app.var_map_preset.get(),
+            "map_custom": self.app.var_map_custom.get(),
+            "server_name": self.app.var_server_name.get(),
+            "port": self.app.var_port.get(),
+            "query_port": self.app.var_query_port.get(),
+            "max_players": self.app.var_max_players.get(),
+            "join_password": self.app.var_join_password.get(),
+            "admin_password": self.app.var_admin_password.get(),
+            "mods": self.txt_mods.get("1.0", "end-1c"),
+            "custom_start_args": self.app.var_custom_start_args.get(),
+            "validate_on_update": self.app.var_validate_on_update.get(),
+            "update_on_startup": self.app.var_update_on_startup.get(),
+            "auto_update_restart": self.app.var_auto_update_restart.get(),
+            "auto_update_time": self.app.var_auto_update_time.get(),
+            "backup_on_stop": self.app.var_backup_on_stop.get(),
+            "backup_dir": self.app.var_backup_dir.get(),
+            "backup_retention": self.app.var_backup_retention.get(),
+            "auto_start_on_launch": self.app.var_auto_start_on_launch.get(),
+            "hide_gameanalytics": self.app.var_hide_gameanalytics_console_logs.get(),
+        }
+    
+    def apply_to_ui(self, data: dict) -> None:
+        """Apply server settings to UI."""
+        if "mods" in data:
+            self.txt_mods.delete("1.0", "end")
+            self.txt_mods.insert("1.0", data["mods"])
