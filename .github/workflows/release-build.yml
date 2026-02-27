@@ -71,15 +71,15 @@ jobs:
           if (!(Test-Path ".\assets\app.ico")) {
             throw "Missing icon: assets\app.ico"
           }
-          if (!(Test-Path ".\ARK-Ascended-Server-Manager.py")) {
-            throw "Missing entry script: ARK-Ascended-Server-Manager.py"
+          if (!(Test-Path ".\RUN.py")) {
+            throw "Missing entry script: RUN.py"
           }
 
           pyinstaller --noconfirm --clean --onefile --windowed `
             --name "ARK-ASA-Manager" `
             --icon ".\assets\app.ico" `
             --add-data ".\assets;assets" `
-            ".\ARK-Ascended-Server-Manager.py"
+            ".\RUN.py"
 
           if (!(Test-Path "dist\ARK-ASA-Manager.exe")) {
             throw "Build failed: dist\ARK-ASA-Manager.exe not found."

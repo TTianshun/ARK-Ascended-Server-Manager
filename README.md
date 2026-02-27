@@ -149,7 +149,7 @@ pyinstaller --noconfirm --clean --onefile --windowed `
   --icon ".\assets\app.ico" `
   --add-data ".\assets;assets" `
   --collect-all rcon `
-  ".\ARK-Ascended-Server-Manager.py"
+  ".\RUN.py"
 ```
 
 ---
