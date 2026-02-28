@@ -68,7 +68,7 @@ class ServerManagerApp:
         self.logger = get_logger(__name__)
         
         # Configure the root window
-        self.root.title("ARK: Survival Ascended Server Manager")
+        self.root.title("ARK：生存进化 服务器管理器")
         self.root.geometry("1220x780")
         self.root.minsize(1000, 700)
         
@@ -246,7 +246,7 @@ class ServerManagerApp:
         
         # Misc
         self.var_hide_gameanalytics_console_logs = tk.BooleanVar(master=self.root)
-        self.var_status = tk.StringVar(master=self.root, value="Ready")
+        self.var_status = tk.StringVar(master=self.root, value="就绪")
         
         # INI editor
         self.var_ini_filter = tk.StringVar(master=self.root)
@@ -277,11 +277,11 @@ class ServerManagerApp:
         tab_ini_frame = ttk.Frame(self.notebook, padding=10)
         
         # Add tabs to notebook
-        self.notebook.add(tab_server_frame, text="Server")
-        self.notebook.add(tab_adv_frame, text="Advanced")
+        self.notebook.add(tab_server_frame, text="服务器")
+        self.notebook.add(tab_adv_frame, text="高级设置")
         self.notebook.add(tab_rcon_frame, text="RCON")
         self.notebook.add(tab_discord_frame, text="Discord")
-        self.notebook.add(tab_ini_frame, text="INI Editor")
+        self.notebook.add(tab_ini_frame, text="INI编辑器")
         
         # Initialize tab components
         self.tabs["server"] = ServerTab(tab_server_frame, self)
@@ -299,7 +299,7 @@ class ServerManagerApp:
     
     def _create_console_area(self, parent: ttk.Frame) -> None:
         """Create the console output area at the bottom of the window."""
-        console_frame = ttk.LabelFrame(parent, text="Console Output", padding=5)
+        console_frame = ttk.LabelFrame(parent, text="控制台输出", padding=5)
         console_frame.grid(row=1, column=0, sticky="nsew", pady=(5, 0))
         console_frame.columnconfigure(0, weight=1)
         console_frame.rowconfigure(0, weight=1)
@@ -336,7 +336,7 @@ class ServerManagerApp:
     
     def _add_server_profile(self) -> None:
         """Add a new server profile."""
-        name = simpledialog.askstring("New Server", "Display name:")
+        name = simpledialog.askstring("新建服务器", "显示名称：")
         if name:
             self.logger.info(f"Adding server profile: {name}")
     
@@ -350,25 +350,25 @@ class ServerManagerApp:
     
     def _browse_steamcmd(self) -> None:
         """Browse for SteamCMD directory."""
-        path = filedialog.askdirectory(title="Select SteamCMD Directory")
+        path = filedialog.askdirectory(title="选择SteamCMD目录")
         if path:
             self.var_steamcmd_dir.set(path)
     
     def _browse_server_dir(self) -> None:
         """Browse for server installation directory."""
-        path = filedialog.askdirectory(title="Select Server Install Directory")
+        path = filedialog.askdirectory(title="选择服务器安装目录")
         if path:
             self.var_server_dir.set(path)
     
     def _browse_backup_dir(self) -> None:
         """Browse for backup directory."""
-        path = filedialog.askdirectory(title="Select Backup Directory")
+        path = filedialog.askdirectory(title="选择备份目录")
         if path:
             self.var_backup_dir.set(path)
     
     def _browse_cluster_dir(self) -> None:
         """Browse for cluster directory override."""
-        path = filedialog.askdirectory(title="Select Cluster Directory")
+        path = filedialog.askdirectory(title="选择集群目录")
         if path:
             self.var_cluster_dir_override.set(path)
     

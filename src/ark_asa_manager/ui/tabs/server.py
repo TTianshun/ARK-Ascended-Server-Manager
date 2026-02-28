@@ -32,11 +32,11 @@ class ServerTab(BaseTab):
     
     def _build_profiles_section(self) -> None:
         """Build the server profiles selector and management buttons."""
-        lf = ttk.LabelFrame(self.frame, text="Server Profiles", padding=10)
+        lf = ttk.LabelFrame(self.frame, text="服务器配置文件", padding=10)
         lf.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         lf.columnconfigure(1, weight=1)
         
-        ttk.Label(lf, text="Active Server").grid(row=0, column=0, sticky="w")
+        ttk.Label(lf, text="活沁服务器").grid(row=0, column=0, sticky="w")
         
         self.cmb_server_profile = ttk.Combobox(
             lf,
@@ -56,40 +56,40 @@ class ServerTab(BaseTab):
         
         ttk.Button(
             profile_actions,
-            text="Add",
+            text="添加",
             command=self.app._add_server_profile
         ).grid(row=0, column=0, padx=(0, 6))
         
         ttk.Button(
             profile_actions,
-            text="Rename",
+            text="重新命名",
             command=self.app._rename_server_profile
         ).grid(row=0, column=1, padx=(0, 6))
         
         ttk.Button(
             profile_actions,
-            text="Remove",
+            text="删除",
             command=self.app._remove_server_profile
         ).grid(row=0, column=2)
     
     def _build_paths_section(self) -> None:
         """Build the paths configuration section (SteamCMD and Server directories)."""
-        lf = ttk.LabelFrame(self.frame, text="Paths", padding=10)
+        lf = ttk.LabelFrame(self.frame, text="路径", padding=10)
         lf.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         lf.columnconfigure(1, weight=1)
         lf.columnconfigure(4, weight=1)
         
-        ttk.Label(lf, text="SteamCMD Directory").grid(row=0, column=0, sticky="w")
+        ttk.Label(lf, text="SteamCMD目录").grid(row=0, column=0, sticky="w")
         ttk.Entry(lf, textvariable=self.app.var_steamcmd_dir).grid(
             row=0, column=1, sticky="ew", padx=6
         )
         ttk.Button(
             lf,
-            text="Browse",
+            text="浏覧",
             command=self.app._browse_steamcmd
         ).grid(row=0, column=2)
         
-        ttk.Label(lf, text="Server Install Directory").grid(
+        ttk.Label(lf, text="服务器安装目录").grid(
             row=0, column=3, sticky="w", padx=(18, 0)
         )
         ttk.Entry(lf, textvariable=self.app.var_server_dir).grid(
@@ -97,21 +97,21 @@ class ServerTab(BaseTab):
         )
         ttk.Button(
             lf,
-            text="Browse",
+            text="浏覧",
             command=self.app._browse_server_dir
         ).grid(row=0, column=5)
     
     def _build_settings_and_ops_sections(self) -> None:
         """Build the server settings (left) and operations (right) side-by-side sections."""
         # --- Server Settings (left column) ---
-        lf_server = ttk.LabelFrame(self.frame, text="Server Settings", padding=10)
+        lf_server = ttk.LabelFrame(self.frame, text="服务器设置", padding=10)
         lf_server.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
         lf_server.columnconfigure(1, weight=1)
         
         vcmd = (self.app.root.register(self.app._validate_digits), "%P")
         
         # Map Preset
-        ttk.Label(lf_server, text="Map Preset").grid(row=0, column=0, sticky="w")
+        ttk.Label(lf_server, text="地图预设").grid(row=0, column=0, sticky="w")
         self.cmb_map = ttk.Combobox(
             lf_server,
             textvariable=self.app.var_map_preset,
@@ -121,19 +121,19 @@ class ServerTab(BaseTab):
         self.cmb_map.bind("<<ComboboxSelected>>", lambda e: self.app._sync_map_mode())
         
         # Custom Map Name
-        ttk.Label(lf_server, text="Custom Map Name").grid(row=1, column=0, sticky="w")
+        ttk.Label(lf_server, text="自定义地图名称").grid(row=1, column=0, sticky="w")
         ttk.Entry(lf_server, textvariable=self.app.var_map_custom).grid(
             row=1, column=1, sticky="ew", padx=6
         )
         
         # Server Name
-        ttk.Label(lf_server, text="Server Name").grid(row=2, column=0, sticky="w")
+        ttk.Label(lf_server, text="服务器名称").grid(row=2, column=0, sticky="w")
         ttk.Entry(lf_server, textvariable=self.app.var_server_name).grid(
             row=2, column=1, sticky="ew", padx=6
         )
         
         # Port settings
-        ttk.Label(lf_server, text="Port").grid(row=3, column=0, sticky="w")
+        ttk.Label(lf_server, text="端口").grid(row=3, column=0, sticky="w")
         ttk.Entry(
             lf_server,
             textvariable=self.app.var_port,
@@ -141,7 +141,7 @@ class ServerTab(BaseTab):
             validatecommand=vcmd
         ).grid(row=3, column=1, sticky="ew", padx=6)
         
-        ttk.Label(lf_server, text="Query Port").grid(row=4, column=0, sticky="w")
+        ttk.Label(lf_server, text="查询端口").grid(row=4, column=0, sticky="w")
         ttk.Entry(
             lf_server,
             textvariable=self.app.var_query_port,
@@ -149,7 +149,7 @@ class ServerTab(BaseTab):
             validatecommand=vcmd
         ).grid(row=4, column=1, sticky="ew", padx=6)
         
-        ttk.Label(lf_server, text="Max Players").grid(row=5, column=0, sticky="w")
+        ttk.Label(lf_server, text="最大玩家数").grid(row=5, column=0, sticky="w")
         ttk.Entry(
             lf_server,
             textvariable=self.app.var_max_players,
@@ -158,18 +158,18 @@ class ServerTab(BaseTab):
         ).grid(row=5, column=1, sticky="ew", padx=6)
         
         # Passwords
-        ttk.Label(lf_server, text="Join Password").grid(row=6, column=0, sticky="w")
+        ttk.Label(lf_server, text="横细庆密码").grid(row=6, column=0, sticky="w")
         ttk.Entry(lf_server, textvariable=self.app.var_join_password).grid(
             row=6, column=1, sticky="ew", padx=6
         )
         
-        ttk.Label(lf_server, text="Admin Password (RCON/Admin)").grid(row=7, column=0, sticky="w")
+        ttk.Label(lf_server, text="管理员密码 (RCON/管理)").grid(row=7, column=0, sticky="w")
         ttk.Entry(lf_server, textvariable=self.app.var_admin_password).grid(
             row=7, column=1, sticky="ew", padx=6
         )
         
         # Mods
-        ttk.Label(lf_server, text="Mods (comma separated)").grid(
+        ttk.Label(lf_server, text="MOD（用逗号分隔）").grid(
             row=8, column=0, sticky="nw", pady=(6, 0)
         )
         mods_frame = ttk.Frame(lf_server)
@@ -195,7 +195,7 @@ class ServerTab(BaseTab):
         self.txt_mods.configure(xscrollcommand=xscroll.set)
         
         # Custom args
-        ttk.Label(lf_server, text="Custom Server Arguments (optional)").grid(
+        ttk.Label(lf_server, text="自定义服务器参数（可选）").grid(
             row=9, column=0, sticky="w", pady=(8, 0)
         )
         ttk.Entry(lf_server, textvariable=self.app.var_custom_start_args).grid(
@@ -203,7 +203,7 @@ class ServerTab(BaseTab):
         )
         
         # --- Operations (right column) ---
-        lf_ops = ttk.LabelFrame(self.frame, text="Operations", padding=10)
+        lf_ops = ttk.LabelFrame(self.frame, text="操作", padding=10)
         lf_ops.grid(row=2, column=1, sticky="nsew", padx=5, pady=5)
         lf_ops.columnconfigure(0, weight=1)
         lf_ops.columnconfigure(1, weight=1)
@@ -218,17 +218,17 @@ class ServerTab(BaseTab):
         
         self.btn_first_install = ttk.Button(
             actions,
-            text="First Install",
+            text="首次安装",
             command=self.app.first_install
         )
         self.btn_stop = ttk.Button(
             actions,
-            text="Stop Server (Safe)",
+            text="停止服务器（安全）",
             command=self.app.stop_server_safe
         )
         self.btn_start = ttk.Button(
             actions,
-            text="Start Server",
+            text="启动服务器",
             command=self.app.start_server
         )
         
@@ -238,17 +238,17 @@ class ServerTab(BaseTab):
         
         self.btn_update_validate = ttk.Button(
             actions,
-            text="Update / Validate",
+            text="更新 / 验证",
             command=self.app.update_validate
         )
         self.btn_update_restart = ttk.Button(
             actions,
-            text="Update / Restart (Safe)",
+            text="更新 / 重新启动（安全）",
             command=self.app.update_and_restart_safe
         )
         self.btn_backup_now = ttk.Button(
             actions,
-            text="Backup Now",
+            text="主动备份",
             command=self.app.backup_now
         )
         
@@ -264,31 +264,31 @@ class ServerTab(BaseTab):
         options_frame.columnconfigure(1, weight=1)
         
         # Update frame (left)
-        update_frame = ttk.LabelFrame(options_frame, text="Update Options", padding=8)
+        update_frame = ttk.LabelFrame(options_frame, text="更新选项", padding=8)
         update_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         update_frame.columnconfigure(1, weight=1)
         
         ttk.Checkbutton(
             update_frame,
-            text="Validate on Update",
+            text="更新时验证",
             variable=self.app.var_validate_on_update
         ).grid(row=0, column=0, sticky="w")
         
         ttk.Checkbutton(
             update_frame,
-            text="Update on startup",
+            text="启动时更新",
             variable=self.app.var_update_on_startup
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
         
         self.chk_auto_update_restart = ttk.Checkbutton(
             update_frame,
-            text="Auto Update & Restart",
+            text="自动更新和重新启动",
             variable=self.app.var_auto_update_restart,
             command=self.app._sync_auto_update_scheduler
         )
         self.chk_auto_update_restart.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
         
-        ttk.Label(update_frame, text="Schedule Time (HH:MM)").grid(
+        ttk.Label(update_frame, text="计划时间 (HH:MM)").grid(
             row=3, column=0, sticky="w", pady=(6, 0)
         )
         ttk.Entry(update_frame, textvariable=self.app.var_auto_update_time).grid(
@@ -297,35 +297,35 @@ class ServerTab(BaseTab):
         
         self.btn_auto_update_test = ttk.Button(
             update_frame,
-            text="Test",
+            text="测试",
             command=self.app.auto_update_test
         )
         self.btn_auto_update_test.grid(row=3, column=2, padx=(6, 0), pady=(6, 0))
         
         # Backup and misc (right)
-        other_frame = ttk.LabelFrame(options_frame, text="Backup & Startup", padding=8)
+        other_frame = ttk.LabelFrame(options_frame, text="备份和启动", padding=8)
         other_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
         other_frame.columnconfigure(1, weight=1)
         
         self.chk_backup_on_stop = ttk.Checkbutton(
             other_frame,
-            text="Backup on Stop",
+            text="停止时备份",
             variable=self.app.var_backup_on_stop,
             command=self.app._sync_backup_label_texts
         )
         self.chk_backup_on_stop.grid(row=0, column=0, sticky="w")
         
-        ttk.Label(other_frame, text="Backup Directory").grid(row=1, column=0, sticky="w")
+        ttk.Label(other_frame, text="备份目录").grid(row=1, column=0, sticky="w")
         ttk.Entry(other_frame, textvariable=self.app.var_backup_dir).grid(
             row=1, column=1, sticky="ew", padx=6
         )
         ttk.Button(
             other_frame,
-            text="Browse",
+            text="浏覧",
             command=self.app._browse_backup_dir
         ).grid(row=1, column=2, padx=(6, 0))
         
-        ttk.Label(other_frame, text="Retention (count)").grid(
+        ttk.Label(other_frame, text="保留个数").grid(
             row=2, column=0, sticky="w"
         )
         vcmd = (self.app.root.register(self.app._validate_digits), "%P")
@@ -338,13 +338,13 @@ class ServerTab(BaseTab):
         
         ttk.Checkbutton(
             other_frame,
-            text="Start server on app launch",
+            text="应用启动时启动服务器",
             variable=self.app.var_auto_start_on_launch
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
         
         ttk.Checkbutton(
             other_frame,
-            text="Hide GameAnalytics spam",
+            text="隐藏GameAnalytics庞音",
             variable=self.app.var_hide_gameanalytics_console_logs,
             command=self.app._sync_console_log_filter_state
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))

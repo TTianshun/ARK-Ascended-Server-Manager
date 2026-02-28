@@ -33,34 +33,34 @@ class AdvancedTab(BaseTab):
     
     def _build_cluster_section(self) -> None:
         """Build cluster configuration section."""
-        lf = ttk.LabelFrame(self.frame, text="Cluster Configuration", padding=10)
+        lf = ttk.LabelFrame(self.frame, text="集群配置", padding=10)
         lf.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         lf.columnconfigure(1, weight=1)
         
         ttk.Checkbutton(
             lf,
-            text="Enable Cluster",
+            text="启用集群",
             variable=self.app.var_cluster_enable
         ).grid(row=0, column=0, sticky="w")
         
-        ttk.Label(lf, text="Cluster ID").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(lf, text="集群ID").grid(row=1, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(lf, textvariable=self.app.var_cluster_id).grid(
             row=1, column=1, sticky="ew", padx=6, pady=(6, 0)
         )
         
         ttk.Checkbutton(
             lf,
-            text="NoTransferFromFiltering",
+            text="禁用介麾转移筛选",
             variable=self.app.var_no_transfer_from_filtering
         ).grid(row=2, column=0, sticky="w", pady=(8, 0))
         
         ttk.Checkbutton(
             lf,
-            text="Enable Cluster Custom Path",
+            text="启用集群自定义路径",
             variable=self.app.var_cluster_custom_path_enable
         ).grid(row=3, column=0, sticky="w", pady=(8, 0))
         
-        ttk.Label(lf, text="ClusterDirOverride Path").grid(
+        ttk.Label(lf, text="集群路径覆盖").grid(
             row=4, column=0, sticky="w", pady=(6, 0)
         )
         path_row = ttk.Frame(lf)
@@ -72,13 +72,13 @@ class AdvancedTab(BaseTab):
         )
         ttk.Button(
             path_row,
-            text="Browse",
+            text="浏覧",
             command=self.app._browse_cluster_dir
         ).grid(row=0, column=1, padx=(6, 0))
         
         ttk.Label(
             lf,
-            text="AltSaveDirectoryName (optional)"
+            text="替代保存程序名称（可选）"
         ).grid(row=5, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(
             lf,
@@ -87,18 +87,18 @@ class AdvancedTab(BaseTab):
     
     def _build_platform_section(self) -> None:
         """Build platform/crossplay section."""
-        lf = ttk.LabelFrame(self.frame, text="Platform / Crossplay", padding=10)
+        lf = ttk.LabelFrame(self.frame, text="平台 / 跨平台游戏", padding=10)
         lf.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         
         ttk.Checkbutton(
             lf,
-            text="ServerPlatform: PC+XSX+WINGDK",
+            text="服务器平台: PC+XSX+WINGDK",
             variable=self.app.var_server_platform_crossplay
         ).grid(row=0, column=0, sticky="w")
         
         ttk.Checkbutton(
             lf,
-            text="Enable BattlEye",
+            text="启用BattlEye",
             variable=self.app.var_enable_battleye
         ).grid(row=1, column=0, sticky="w", pady=(6, 0))
     
@@ -106,18 +106,18 @@ class AdvancedTab(BaseTab):
         """Build dinosaur settings section."""
         lf = ttk.LabelFrame(
             self.frame,
-            text="Dinosaur Settings (mutual exclusive)",
+            text="恐龙设置（互斥）",
             padding=10
         )
         lf.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
         
         dino_opts = [
-            ("Default", ""),
-            ("No Dinos", "NoDinos"),
-            ("No Dinos Except Forced Spawn", "NoDinosExceptForcedSpawn"),
-            ("No Dinos Except Streaming Spawn", "NoDinosExceptStreamingSpawn"),
-            ("No Dinos Except Manual Spawn", "NoDinosExceptManualSpawn"),
-            ("No Dinos Except Water Spawn", "NoDinosExceptWaterSpawn"),
+            ("默认", ""),
+            ("不恐龙", "NoDinos"),
+            ("除横出恐龙外不恐龙", "NoDinosExceptForcedSpawn"),
+            ("除流渐恐龙外不恐龙", "NoDinosExceptStreamingSpawn"),
+            ("除手威需恐龙外不恐龙", "NoDinosExceptManualSpawn"),
+            ("除水攋恐龙外不恐龙", "NoDinosExceptWaterSpawn"),
         ]
         
         for i, (label, value) in enumerate(dino_opts):
@@ -130,45 +130,45 @@ class AdvancedTab(BaseTab):
     
     def _build_logs_section(self) -> None:
         """Build logs section."""
-        lf = ttk.LabelFrame(self.frame, text="Logs", padding=10)
+        lf = ttk.LabelFrame(self.frame, text="日志", padding=10)
         lf.grid(row=1, column=1, sticky="nsew", padx=5, pady=5)
         
         ttk.Checkbutton(
             lf,
-            text="servergamelog",
+            text="服务器游戏日志",
             variable=self.app.var_log_servergamelog
         ).grid(row=0, column=0, sticky="w")
         
         ttk.Checkbutton(
             lf,
-            text="servergamelogincludetribelogs",
+            text="服务器游戏日志包含部落日志",
             variable=self.app.var_log_servergamelogincludetribelogs
         ).grid(row=1, column=0, sticky="w")
         
         ttk.Checkbutton(
             lf,
-            text="ServerRCONOutputTribeLogs",
+            text="服务器RCON输出部落日志",
             variable=self.app.var_log_serverrconoutputtribelogs
         ).grid(row=2, column=0, sticky="w")
     
     def _build_mechanics_section(self) -> None:
         """Build server mechanics section."""
-        lf = ttk.LabelFrame(self.frame, text="Mechanics / Performance", padding=10)
+        lf = ttk.LabelFrame(self.frame, text="力学 / 性能", padding=10)
         lf.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
         
         mech_items = [
-            ("DisableCustomCosmetics", self.app.var_m_disablecustomcosmetics),
-            ("AutoDestroyStructures", self.app.var_m_autodestroystructures),
-            ("ForceRespawnDinos", self.app.var_m_forcerespawndinos),
-            ("NoWildBabies", self.app.var_m_nowildbabies),
-            ("ForceAllowCaveFlyers", self.app.var_m_forceallowcaveflyers),
-            ("disabledinonetrangescaling", self.app.var_m_disabledinonetrangescaling),
-            ("UnstasisDinoObstructionCheck", self.app.var_m_unstasisdinoobstructioncheck),
-            ("AlwaysTickDedicatedSkeletalMeshes", self.app.var_m_alwaystickdedicatedskeletalmeshes),
-            ("disableCharacterTracker", self.app.var_m_disablecharactertracker),
-            ("UseServerNetSpeedCheck", self.app.var_m_useservernetspeedcheck),
-            ("StasisKeepControllers", self.app.var_m_stasiskeepcontrollers),
-            ("ignoredupeditems", self.app.var_m_ignoredupeditems),
+            ("禁用自定义旺旧事物", self.app.var_m_disablecustomcosmetics),
+            ("自动销毁建筑", self.app.var_m_autodestroystructures),
+            ("强制重换恐龙", self.app.var_m_forcerespawndinos),
+            ("止止野生亯化", self.app.var_m_nowildbabies),
+            ("强制允许洞窟飞行恐龙", self.app.var_m_forceallowcaveflyers),
+            ("突准掩蔽恐龙网络范围缩放", self.app.var_m_disabledinonetrangescaling),
+            ("离云状态恐龙阻挡检测", self.app.var_m_unstasisdinoobstructioncheck),
+            ("总是按次渐进事药跟阺骨网格", self.app.var_m_alwaystickdedicatedskeletalmeshes),
+            ("禁用角色追踪器", self.app.var_m_disablecharactertracker),
+            ("使用服务器网络速度检查", self.app.var_m_useservernetspeedcheck),
+            ("云状态保持控制器", self.app.var_m_stasiskeepcontrollers),
+            ("忽略重复网格", self.app.var_m_ignoredupeditems),
         ]
         
         for i, (label, var) in enumerate(mech_items):
@@ -180,28 +180,28 @@ class AdvancedTab(BaseTab):
     
     def _build_runtime_section(self) -> None:
         """Build runtime and RCON section."""
-        lf = ttk.LabelFrame(self.frame, text="Mods & RCON", padding=10)
+        lf = ttk.LabelFrame(self.frame, text="MOD 和 RCON", padding=10)
         lf.grid(row=2, column=1, sticky="nsew", padx=5, pady=5)
         lf.columnconfigure(1, weight=1)
         
         ttk.Checkbutton(
             lf,
-            text="Automanaged Mods",
+            text="自动管理MOD",
             variable=self.app.var_automanaged_mods
         ).grid(row=0, column=0, sticky="w")
         
         ttk.Checkbutton(
             lf,
-            text="Enable RCON",
+            text="启用RCON",
             variable=self.app.var_enable_rcon
         ).grid(row=1, column=0, sticky="w", pady=(6, 0))
         
-        ttk.Label(lf, text="RCON Host").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(lf, text="RCON主樋").grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(lf, textvariable=self.app.var_rcon_host).grid(
             row=2, column=1, sticky="ew", padx=6, pady=(6, 0)
         )
         
-        ttk.Label(lf, text="RCON Port").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(lf, text="RCON端口").grid(row=3, column=0, sticky="w", pady=(6, 0))
         vcmd = (self.app.root.register(self.app._validate_digits), "%P")
         ttk.Entry(
             lf,
@@ -212,20 +212,20 @@ class AdvancedTab(BaseTab):
     
     def _build_tools_section(self) -> None:
         """Build tools/folder access section."""
-        lf = ttk.LabelFrame(self.frame, text="Folders", padding=10)
+        lf = ttk.LabelFrame(self.frame, text="文件夹", padding=10)
         lf.grid(row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         lf.columnconfigure(0, weight=1)
         
         self.btn_open_app = ttk.Button(
             lf,
-            text="Open App Folder",
+            text="打开应用文件夹",
             command=lambda: self.app.open_folder(self.app.app_base)
         )
         self.btn_open_app.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         
         self.btn_open_server_cfg = ttk.Button(
             lf,
-            text="Open Server Config",
+            text="打开服务器配置",
             command=self.app.open_server_config_dir
         )
         self.btn_open_server_cfg.grid(row=1, column=0, sticky="ew")

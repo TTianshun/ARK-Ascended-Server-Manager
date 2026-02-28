@@ -22,35 +22,35 @@ class IniEditorTab(BaseTab):
         ini_top.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         ini_top.columnconfigure(1, weight=1)
         
-        ttk.Label(ini_top, text="Target").grid(row=0, column=0, sticky="w")
-        self.lbl_ini_target = ttk.Label(ini_top, text="(not loaded)")
+        ttk.Label(ini_top, text="目标").grid(row=0, column=0, sticky="w")
+        self.lbl_ini_target = ttk.Label(ini_top, text="（未加载）")
         self.lbl_ini_target.grid(row=0, column=1, sticky="w", padx=6)
         
         ttk.Button(
             ini_top,
-            text="Load GameUserSettings.ini",
+            text="加载GameUserSettings.ini",
             command=self.app.load_gameusersettings
         ).grid(row=0, column=2, padx=4)
         
         ttk.Button(
             ini_top,
-            text="Load Game.ini",
+            text="加载Game.ini",
             command=self.app.load_game_ini
         ).grid(row=0, column=3, padx=4)
         
         ttk.Button(
             ini_top,
-            text="Open Live + Staging",
+            text="打开流洋文档 + 上会模坻",
             command=self.app.open_loaded_ini
         ).grid(row=0, column=4, padx=4)
         
         ttk.Button(
             ini_top,
-            text="Resync from Upstream",
+            text="从上游重新整合",
             command=self.app._ini_resync_from_upstream
         ).grid(row=0, column=5, padx=4)
         
-        ttk.Label(ini_top, text="Filter").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(ini_top, text="筛选").grid(row=1, column=0, sticky="w", pady=(6, 0))
         ent_filter = ttk.Entry(ini_top, textvariable=self.app.var_ini_filter)
         ent_filter.grid(row=1, column=1, sticky="ew", padx=6, pady=(6, 0))
         ent_filter.bind("<KeyRelease>", lambda e: self.app._ini_refresh_tree())
@@ -61,19 +61,19 @@ class IniEditorTab(BaseTab):
         tree_frame.columnconfigure(0, weight=1)
         tree_frame.rowconfigure(0, weight=1)
         
-        ttk.Label(tree_frame, text="INI Entries").grid(
+        ttk.Label(tree_frame, text="INI条目").grid(
             row=0, column=0, sticky="w", pady=(0, 4)
         )
         
         self.tree_ini = ttk.Treeview(
             tree_frame,
-            columns=("Section", "Key", "Value"),
+            columns=("部分", "关锫", "值"),
             height=20
         )
-        self.tree_ini.heading("#0", text="Entry")
-        self.tree_ini.heading("Section", text="Section")
-        self.tree_ini.heading("Key", text="Key")
-        self.tree_ini.heading("Value", text="Value")
+        self.tree_ini.heading("#0", text="条目")
+        self.tree_ini.heading("部分", text="部分")
+        self.tree_ini.heading("关锫", text="关锫")
+        self.tree_ini.heading("值", text="值")
         self.tree_ini.column("#0", width=150)
         self.tree_ini.column("Section", width=150)
         self.tree_ini.column("Key", width=150)
@@ -88,25 +88,25 @@ class IniEditorTab(BaseTab):
         self.tree_ini.configure(yscrollcommand=scroll.set)
         
         # --- Edit panel (right side) ---
-        edit_frame = ttk.LabelFrame(self.frame, text="Edit Entry", padding=10)
+        edit_frame = ttk.LabelFrame(self.frame, text="编辑条目", padding=10)
         edit_frame.grid(row=1, column=1, sticky="nsew", padx=(2, 5), pady=(0, 5))
         edit_frame.columnconfigure(1, weight=1)
         
-        ttk.Label(edit_frame, text="Section").grid(row=0, column=0, sticky="w")
+        ttk.Label(edit_frame, text="部分").grid(row=0, column=0, sticky="w")
         ttk.Entry(
             edit_frame,
             textvariable=self.app.var_ini_section,
             state="readonly"
         ).grid(row=0, column=1, sticky="ew", padx=6)
         
-        ttk.Label(edit_frame, text="Key").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(edit_frame, text="关锫").grid(row=1, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(
             edit_frame,
             textvariable=self.app.var_ini_key,
             state="readonly"
         ).grid(row=1, column=1, sticky="ew", padx=6, pady=(6, 0))
         
-        ttk.Label(edit_frame, text="Value").grid(row=2, column=0, sticky="nw", pady=(6, 0))
+        ttk.Label(edit_frame, text="值").grid(row=2, column=0, sticky="nw", pady=(6, 0))
         self.ent_ini_value = ttk.Entry(edit_frame, textvariable=self.app.var_ini_value)
         self.ent_ini_value.grid(row=2, column=1, sticky="ew", padx=6, pady=(6, 0))
         
@@ -116,39 +116,39 @@ class IniEditorTab(BaseTab):
         
         ttk.Button(
             edit_btns,
-            text="Update",
+            text="更新",
             command=self.app._ini_update_value
         ).grid(row=0, column=0, padx=(0, 6))
         
         ttk.Button(
             edit_btns,
-            text="Delete",
+            text="删除",
             command=self.app._ini_delete_entry
         ).grid(row=0, column=1)
         
         # --- Add entry panel (right side, bottom) ---
-        add_frame = ttk.LabelFrame(self.frame, text="Add Entry", padding=10)
+        add_frame = ttk.LabelFrame(self.frame, text="添加条目", padding=10)
         add_frame.grid(row=2, column=1, sticky="nsew", padx=(2, 5), pady=(0, 5))
         add_frame.columnconfigure(1, weight=1)
         
-        ttk.Label(add_frame, text="Section").grid(row=0, column=0, sticky="w")
+        ttk.Label(add_frame, text="部分").grid(row=0, column=0, sticky="w")
         ttk.Entry(add_frame, textvariable=self.app.var_ini_add_section).grid(
             row=0, column=1, sticky="ew", padx=6
         )
         
-        ttk.Label(add_frame, text="Key").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(add_frame, text="关锫").grid(row=1, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(add_frame, textvariable=self.app.var_ini_add_key).grid(
             row=1, column=1, sticky="ew", padx=6, pady=(6, 0)
         )
         
-        ttk.Label(add_frame, text="Value").grid(row=2, column=0, sticky="nw", pady=(6, 0))
+        ttk.Label(add_frame, text="值").grid(row=2, column=0, sticky="nw", pady=(6, 0))
         ttk.Entry(add_frame, textvariable=self.app.var_ini_add_value).grid(
             row=2, column=1, sticky="ew", padx=6, pady=(6, 0)
         )
         
         add_btn = ttk.Button(
             add_frame,
-            text="Add Entry",
+            text="添加条目",
             command=self.app._ini_add_entry
         )
         add_btn.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
@@ -160,7 +160,7 @@ class IniEditorTab(BaseTab):
         
         self.btn_ini_save = ttk.Button(
             save_frame,
-            text="Save Changes",
+            text="保存更改",
             command=self.app._ini_save_changes
         )
         self.btn_ini_save.grid(row=0, column=0, sticky="ew")

@@ -20,7 +20,7 @@ class RconTab(BaseTab):
         lf.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
         lf.columnconfigure(1, weight=1)
         
-        ttk.Label(lf, text="Saved Commands").grid(row=0, column=0, sticky="w")
+        ttk.Label(lf, text="存储的命令").grid(row=0, column=0, sticky="w")
         self.cmb_rcon_saved = ttk.Combobox(
             lf,
             textvariable=self.app.var_rcon_saved,
@@ -33,14 +33,14 @@ class RconTab(BaseTab):
             lambda e: self.app.var_rcon_cmd.set(self.app.var_rcon_saved.get())
         )
         
-        ttk.Label(lf, text="Command").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(lf, text="命令").grid(row=1, column=0, sticky="w", pady=(8, 0))
         self.ent_rcon_cmd = ttk.Entry(lf, textvariable=self.app.var_rcon_cmd)
         self.ent_rcon_cmd.grid(row=1, column=1, sticky="ew", padx=6, pady=(8, 0))
         self.ent_rcon_cmd.bind("<Return>", lambda e: self.app.send_rcon())
         
         self.btn_rcon_send = ttk.Button(
             lf,
-            text="Send",
+            text="发送",
             command=self.app.send_rcon
         )
         self.btn_rcon_send.grid(row=1, column=2, pady=(8, 0))
@@ -51,20 +51,20 @@ class RconTab(BaseTab):
         
         ttk.Button(
             btn_row,
-            text="Save Command",
+            text="保存命令",
             command=self.app._rcon_save_current
         ).grid(row=0, column=0, padx=(0, 6))
         
         ttk.Button(
             btn_row,
-            text="Remove Selected",
+            text="删除所选",
             command=self.app._rcon_remove_selected
         ).grid(row=0, column=1)
         
         # Info label
         ttk.Label(
             self.frame,
-            text="Responses are written to the shared Console.",
+            text="响应会输出到共享控制台。",
             foreground=self.app.theme_colors.get("muted", "#888888")
         ).grid(row=1, column=0, sticky="w", pady=(8, 0))
     
