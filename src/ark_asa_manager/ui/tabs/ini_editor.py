@@ -67,13 +67,13 @@ class IniEditorTab(BaseTab):
         
         self.tree_ini = ttk.Treeview(
             tree_frame,
-            columns=("部分", "关锫", "值"),
+            columns=("Section", "Key", "Value"),
             height=20
         )
         self.tree_ini.heading("#0", text="条目")
-        self.tree_ini.heading("部分", text="部分")
-        self.tree_ini.heading("关锫", text="关锫")
-        self.tree_ini.heading("值", text="值")
+        self.tree_ini.heading("Section", text="部分")
+        self.tree_ini.heading("Key", text="键")
+        self.tree_ini.heading("Value", text="值")
         self.tree_ini.column("#0", width=150)
         self.tree_ini.column("Section", width=150)
         self.tree_ini.column("Key", width=150)

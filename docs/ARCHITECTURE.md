@@ -135,15 +135,32 @@ backups = storage.get_backup_dir("MyServer")
 ```
 
 #### ProcessManager
-管理服务器进程的启动和停止。
+管理多个服务器进程的启动、停止和状态监控。支持同时运行多个服务器。
 
 ```python
 from ark_asa_manager.core import ProcessManager
+from pathlib import Path
 
 pm = ProcessManager()
-pm.start(Path("ShooterGameServer.exe"), args=["ServerParams"])
-print(f"PID: {pm.get_pid()}")
-pm.stop(timeout=30)
+
+# 启动服务器1
+pm.start("server1", Path("ShooterGameServer.exe"), args=["ServerParams"])
+print(f"Server1 PID: {pm.get_pid('server1')}")
+
+# 启动服务器2
+pm.start("server2", Path("ShooterGameServer.exe"), args=["ServerParams"])
+print(f"Server2 PID: {pm.get_pid('server2')}")
+
+# 检查运行中的服务器
+running = pm.get_all_running_servers()
+print(f"运行中的服务器: {running}")
+print(f"运行数量: {pm.get_running_count()}")
+
+# 停止特定服务器
+pm.stop("server1", timeout=30)
+
+# 停止所有服务器
+pm.stop_all(timeout=30)
 ```
 
 ### 3. Models Module (`models/`)

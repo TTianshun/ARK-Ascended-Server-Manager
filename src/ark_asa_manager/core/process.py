@@ -4,46 +4,62 @@
 import subprocess
 import time
 import os
-from typing import Optional, List
+from typing import Optional, List, Dict
 from pathlib import Path
 
 
 class ProcessManager:
-    """服务器进程管理"""
+    """多服务器进程管理 - 支持同时运行多个服务器"""
     
     def __init__(self):
-        self._process: Optional[subprocess.Popen] = None
-        self._pid: Optional[int] = None
+        # 字典式管理：server_id -> Popen 对象
+        self._processes: Dict[str, subprocess.Popen] = {}
+        # 字典式管理：server_id -> PID
+        self._pids: Dict[str, int] = {}
     
-    def is_running(self) -> bool:
-        """检查进程是否运行中"""
-        if self._pid is None:
+    def is_running(self, server_id: str) -> bool:
+        """
+        检查特定服务器进程是否运行中
+        
+        Args:
+            server_id: 服务器唯一标识
+            
+        Returns:
+            运行中返回True，否则返回False
+        """
+        if server_id not in self._pids:
             return False
         try:
-            os.kill(self._pid, 0)
+            pid = self._pids[server_id]
+            os.kill(pid, 0)
             return True
         except OSError:
+            # 进程已终止，清理数据
+            self._cleanup(server_id)
             return False
     
     def start(
         self,
+        server_id: str,
         executable: Path,
         args: Optional[List[str]] = None,
         cwd: Optional[Path] = None
     ) -> bool:
         """
-        启动进程
+        启动指定服务器的进程
         
         Args:
+            server_id: 服务器唯一标识
             executable: 可执行文件路径
             args: 命令行参数
             cwd: 工作目录
         
         Returns:
-            成功返回True
+            成功返回True，服务器已运行则返回False
         """
         try:
-            if self.is_running():
+            if self.is_running(server_id):
+                print(f"服务器 {server_id} 已在运行，启动失败")
                 return False
             
             cmd = [str(executable)]
@@ -57,39 +73,103 @@ class ProcessManager:
             if cwd:
                 kwargs['cwd'] = str(cwd)
             
-            self._process = subprocess.Popen(cmd, **kwargs)
-            self._pid = self._process.pid
+            process = subprocess.Popen(cmd, **kwargs)
+            self._processes[server_id] = process
+            self._pids[server_id] = process.pid
+            print(f"服务器 {server_id} 启动成功，PID: {process.pid}")
             return True
         except Exception as e:
-            print(f"启动进程失败: {e}")
+            print(f"启动服务器 {server_id} 失败: {e}")
             return False
     
-    def stop(self, timeout: int = 30) -> bool:
+    def stop(self, server_id: str, timeout: int = 30) -> bool:
         """
-        停止进程
+        停止指定服务器的进程
         
         Args:
+            server_id: 服务器唯一标识
             timeout: 等待超时（秒）
         
         Returns:
             成功返回True
         """
-        if not self.is_running():
+        if not self.is_running(server_id):
             return True
         
         try:
-            if self._process:
-                self._process.terminate()
+            if server_id in self._processes:
+                process = self._processes[server_id]
+                process.terminate()
                 try:
-                    self._process.wait(timeout=timeout)
+                    process.wait(timeout=timeout)
+                    print(f"服务器 {server_id} 已安全关闭")
                 except subprocess.TimeoutExpired:
-                    self._process.kill()
-                    self._process.wait()
+                    process.kill()
+                    process.wait()
+                    print(f"服务器 {server_id} 被强制关闭")
+            self._cleanup(server_id)
             return True
         except Exception as e:
-            print(f"停止进程失败: {e}")
+            print(f"停止服务器 {server_id} 失败: {e}")
             return False
     
-    def get_pid(self) -> Optional[int]:
-        """获取进程ID"""
-        return self._pid
+    def stop_all(self, timeout: int = 30) -> bool:
+        """
+        停止所有运行中的服务器
+        
+        Args:
+            timeout: 单个服务器的等待超时（秒）
+        
+        Returns:
+            所有服务器都成功停止返回True
+        """
+        all_success = True
+        server_ids = list(self._pids.keys())
+        for server_id in server_ids:
+            if not self.stop(server_id, timeout):
+                all_success = False
+        return all_success
+    
+    def get_pid(self, server_id: str) -> Optional[int]:
+        """
+        获取指定服务器的进程ID
+        
+        Args:
+            server_id: 服务器唯一标识
+            
+        Returns:
+            进程ID，如果不存在则返回None
+        """
+        return self._pids.get(server_id)
+    
+    def get_all_running_servers(self) -> List[str]:
+        """
+        获取所有运行中的服务器ID列表
+        
+        Returns:
+            服务器ID列表
+        """
+        running = []
+        for server_id in list(self._pids.keys()):
+            if self.is_running(server_id):
+                running.append(server_id)
+        return running
+    
+    def get_running_count(self) -> int:
+        """
+        获取运行中的服务器数量
+        
+        Returns:
+            运行中的服务器数量
+        """
+        return len(self.get_all_running_servers())
+    
+    def _cleanup(self, server_id: str) -> None:
+        """
+        清理指定服务器的进程数据
+        
+        Args:
+            server_id: 服务器唯一标识
+        """
+        self._processes.pop(server_id, None)
+        self._pids.pop(server_id, None)
