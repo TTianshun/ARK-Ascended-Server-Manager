@@ -1,6 +1,8 @@
 """
 全局常量定义
 """
+import os
+from pathlib import Path
 
 # 应用信息
 APP_NAME = "ARK: Survival Ascended Server Manager"
@@ -10,10 +12,14 @@ APP_VERSION = "1.0.0"
 # Steam
 ARK_ASA_APP_ID = 2430930  # ASA Dedicated Server AppID
 STEAMCMD_ZIP_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
-DEFAULT_STEAMCMD_DIR = r"C:\GameServer\SteamCMD"
+
+# 默认安装路径：优先使用 %PROGRAMDATA%（通常为 C:\ProgramData），
+# 避免硬编码 C:\ 导致在非 C 盘系统或无管理员权限时失败。
+_GAME_ROOT = Path(os.environ.get("PROGRAMDATA") or r"C:\ProgramData") / "GameServer"
+DEFAULT_STEAMCMD_DIR = str(_GAME_ROOT / "SteamCMD")
 
 # 服务器默认配置
-DEFAULT_SERVER_DIR = r"C:\GameServer\ARK-Survival-Ascended-Server"
+DEFAULT_SERVER_DIR = str(_GAME_ROOT / "ARK-Survival-Ascended-Server")
 DEFAULT_MAP = "TheIsland_WP"
 DEFAULT_SERVER_NAME = "default"
 DEFAULT_PORT = 7777
@@ -61,3 +67,5 @@ LOCKS_DIR_NAME = "locks"
 
 # 配置文件
 GLOBAL_CONFIG_NAME = "global.json"
+LEGACY_CONFIG_NAME = "config.json"
+SERVER_CONFIG_NAME = "server.json"

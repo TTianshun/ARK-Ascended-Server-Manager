@@ -97,20 +97,49 @@ class INIParser:
     def to_string(self) -> str:
         """转换为字符串"""
         result = []
-        current_section = None
-        
+        current_section: Optional[str] = None
+        # 跟踪每个 section 中已写出的 key，用于补充新增的 key
+        written_keys: dict = {}
+
         for line in self.lines:
             if line.type == "section":
+                # 切换 section 前，先补充当前 section 中新增的 key
+                if current_section is not None:
+                    self._append_new_keys(result, current_section, written_keys.get(current_section, set()))
                 current_section = line.section
+                written_keys[current_section] = set()
                 result.append(str(line))
-            elif line.type == "key":
-                if line.section in self.sections and line.key in self.sections[line.section]:
-                    new_value = self.sections[line.section][line.key]
+            elif line.type == "key" and current_section is not None:
+                # 用 current_section（而非 line.section）查找最新值
+                if current_section in self.sections and line.key in self.sections[current_section]:
+                    new_value = self.sections[current_section][line.key]
                     result.append(f"{line.key}={new_value}")
+                    written_keys[current_section].add(line.key)
+                # key 已被 delete() 删除时直接跳过，不输出该行
             else:
                 result.append(str(line))
-        
+
+        # 补充最后一个 section 中新增的 key
+        if current_section is not None:
+            self._append_new_keys(result, current_section, written_keys.get(current_section, set()))
+
+        # 输出完全新增的 section（原文件中不存在的）
+        existing_sections = {l.section for l in self.lines if l.type == "section"}
+        for section, keys in self.sections.items():
+            if section not in existing_sections:
+                result.append(f"[{section}]")
+                for k, v in keys.items():
+                    result.append(f"{k}={v}")
+
         return '\n'.join(result)
+
+    def _append_new_keys(self, result: list, section: str, written: set) -> None:
+        """将 section 中通过 set() 新增但原文件中不存在的 key 追加到输出"""
+        if section not in self.sections:
+            return
+        for key, value in self.sections[section].items():
+            if key not in written:
+                result.append(f"{key}={value}")
     
     def save_file(self, path: Path) -> bool:
         """保存到文件"""
