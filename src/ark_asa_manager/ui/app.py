@@ -210,15 +210,22 @@ class ServerManagerApp:
         self._busy = False
         self._async_thread: Optional[threading.Thread] = None
 
-        # 服务器进程管理
-        self._server_proc: Optional[subprocess.Popen] = None
-        self._server_proc_lock = threading.Lock()
-        self._stop_log_reader = threading.Event()
-        self._stop_requested = threading.Event()
+        # 多服务器进程管理（每个 server_id 独立）
+        # server_id -> subprocess.Popen
+        self._server_procs: Dict[str, subprocess.Popen] = {}
+        self._server_procs_lock = threading.Lock()
+        # server_id -> threading.Event (日志读取停止标志)
+        self._stop_log_readers: Dict[str, threading.Event] = {}
+        # server_id -> threading.Event (用户主动停止标志)
+        self._stop_requested_flags: Dict[str, threading.Event] = {}
+        # server_id -> 服务器配置快照（启动时记录，用于停止/备份）
+        self._running_server_configs: Dict[str, Dict[str, Any]] = {}
 
-        # 自动更新调度
-        self._auto_update_thread: Optional[threading.Thread] = None
-        self._auto_update_stop = threading.Event()
+        # 自动更新调度（每个 server_id 独立）
+        # server_id -> threading.Thread
+        self._auto_update_threads: Dict[str, threading.Thread] = {}
+        # server_id -> threading.Event
+        self._auto_update_stops: Dict[str, threading.Event] = {}
     
     def _init_variables(self) -> None:
         """Initialize all tkinter variables."""
@@ -829,15 +836,7 @@ class ServerManagerApp:
         if selected_id == self.active_server_id:
             return
 
-        # 服务器运行时禁止切换配置
-        if self._is_server_running():
-            messagebox.showwarning(
-                "无法切换",
-                "服务器正在运行，请先停止服务器再切换配置文件。"
-            )
-            self._refresh_server_profile_selector()
-            return
-
+        # 保存当前配置后再切换（允许在任何服务器运行时切换）
         if not self._save_active_server_config(interactive=True):
             # Keep selection on current profile when validation fails
             self._refresh_server_profile_selector()
@@ -854,14 +853,6 @@ class ServerManagerApp:
     
     def _add_server_profile(self) -> None:
         """Add a new server profile."""
-        # 服务器运行时禁止添加（因为添加后会切换到新配置）
-        if self._is_server_running():
-            messagebox.showwarning(
-                "无法添加",
-                "服务器正在运行，请先停止服务器再添加新配置文件。"
-            )
-            return
-
         name = simpledialog.askstring("新建服务器", "显示名称：")
         if not name:
             return
@@ -919,7 +910,6 @@ class ServerManagerApp:
         """Rename the current server profile."""
         if not self.active_server_id:
             return
-        # 服务器运行时也允许重命名（只是改显示名称）
         current_label = self.var_server_profile.get() or "当前服务器"
         new_name = simpledialog.askstring("重命名服务器", "显示名称：", initialvalue=current_label)
         if not new_name:
@@ -936,11 +926,11 @@ class ServerManagerApp:
     
     def _remove_server_profile(self) -> None:
         """Remove the current server profile."""
-        # 服务器运行时禁止删除当前配置
-        if self._is_server_running():
+        # 若该配置的服务器正在运行，禁止删除
+        if self._is_server_running_for(self.active_server_id):
             messagebox.showwarning(
                 "无法删除",
-                "服务器正在运行，请先停止服务器再删除配置文件。"
+                "该服务器正在运行，请先停止服务器再删除配置文件。"
             )
             return
 
@@ -1094,74 +1084,93 @@ class ServerManagerApp:
         self.root.after(0, _append)
 
     # ------------------------------------------------------------------
-    # 服务器进程状态辅助
+    # 多服务器进程状态辅助
     # ------------------------------------------------------------------
 
     def _is_server_running(self) -> bool:
-        """线程安全地检查服务器进程是否正在运行"""
-        with self._server_proc_lock:
-            p = self._server_proc
+        """检查当前选中配置的服务器是否正在运行"""
+        return self._is_server_running_for(self.active_server_id)
+
+    def _is_server_running_for(self, server_id: str) -> bool:
+        """检查指定 server_id 的服务器是否正在运行"""
+        if not server_id:
+            return False
+        with self._server_procs_lock:
+            p = self._server_procs.get(server_id)
         return p is not None and p.poll() is None
+
+    def _get_running_server_ids(self) -> List[str]:
+        """获取所有正在运行的 server_id 列表"""
+        with self._server_procs_lock:
+            ids = list(self._server_procs.keys())
+        return [sid for sid in ids if self._is_server_running_for(sid)]
 
     def _refresh_buttons(self) -> None:
         """刷新操作按钮状态（在 UI 线程中调用）"""
         self._set_busy(self._busy)
 
-    def _server_log_reader(self) -> None:
-        """后台线程：将服务器进程的 stdout 实时写入控制台日志"""
-        with self._server_proc_lock:
-            p = self._server_proc
+    def _server_log_reader_for(self, server_id: str) -> None:
+        """后台线程：将指定服务器进程的 stdout 实时写入控制台日志"""
+        with self._server_procs_lock:
+            p = self._server_procs.get(server_id)
         if not p or not p.stdout:
             return
 
+        stop_event = self._stop_log_readers.get(server_id)
+        cfg = self._running_server_configs.get(server_id, {})
+        hide_ga = cfg.get("hide_gameanalytics_console_logs", True)
+
         try:
             for line in p.stdout:
-                if self._stop_log_reader.is_set():
+                if stop_event and stop_event.is_set():
                     break
                 stripped = line.rstrip()
-                # 按需过滤 GameAnalytics 噪音
-                if self.server_cfg.get("hide_gameanalytics_console_logs") and \
-                        "gameanalytics" in stripped.lower():
+                if hide_ga and "gameanalytics" in stripped.lower():
                     continue
-                self.logger.info(stripped)
+                self.logger.info(f"[{server_id[:8]}] {stripped}")
         except Exception as e:
-            self.logger.debug(f"日志读取器停止: {e}")
+            self.logger.debug(f"[{server_id[:8]}] 日志读取器停止: {e}")
         finally:
             code: Optional[int] = None
             try:
                 code = p.poll()
                 if code is not None:
-                    self.logger.info(f"服务器已退出，退出码: {code}")
+                    self.logger.info(f"[{server_id[:8]}] 服务器已退出，退出码: {code}")
             except Exception:
                 pass
-            with self._server_proc_lock:
-                if self._server_proc is p:
-                    self._server_proc = None
+
+            with self._server_procs_lock:
+                if self._server_procs.get(server_id) is p:
+                    self._server_procs.pop(server_id, None)
+                self._stop_log_readers.pop(server_id, None)
+                self._running_server_configs.pop(server_id, None)
 
             self.root.after(0, self._refresh_buttons)
-            self._maybe_auto_restart(code)
+            self._maybe_auto_restart_for(server_id, code)
 
-    def _maybe_auto_restart(self, exit_code: Optional[int]) -> None:
-        """若退出码符合自动重启条件，在延迟后重新启动服务器"""
+    def _maybe_auto_restart_for(self, server_id: str, exit_code: Optional[int]) -> None:
+        """若退出码符合自动重启条件，在延迟后重新启动指定服务器"""
         if exit_code is None:
             return
         if exit_code not in AUTO_RESTART_EXIT_CODES:
             return
-        if self._stop_requested.is_set():
+        stop_flag = self._stop_requested_flags.get(server_id)
+        if stop_flag and stop_flag.is_set():
             return
         if self._busy:
             return
 
         self.logger.info(
-            f"服务器以代码 {exit_code} 退出 → {AUTO_RESTART_DELAY_SEC}s 后自动重启..."
+            f"[{server_id[:8]}] 服务器以代码 {exit_code} 退出 → {AUTO_RESTART_DELAY_SEC}s 后自动重启..."
         )
 
         def _delayed_restart() -> None:
             time.sleep(AUTO_RESTART_DELAY_SEC)
             try:
-                self._start_server_inline()
+                cfg = self.config_manager.load_server_config(server_id)
+                self._start_server_for(server_id, cfg)
             except Exception as e:
-                self.logger.error(f"自动重启失败: {e}")
+                self.logger.error(f"[{server_id[:8]}] 自动重启失败: {e}")
 
         threading.Thread(target=_delayed_restart, daemon=True).start()
 
@@ -1171,6 +1180,8 @@ class ServerManagerApp:
 
     def first_install(self) -> None:
         """首次安装：安装依赖 + 证书 + SteamCMD + ASA 服务器"""
+        server_id = self.active_server_id
+
         def _task() -> None:
             self._save_active_server_config()
             cfg = self.server_cfg
@@ -1200,29 +1211,34 @@ class ServerManagerApp:
         self._run_async(_task, label="首次安装")
 
     def start_server(self) -> None:
-        """启动服务器"""
+        """启动当前选中的服务器"""
+        server_id = self.active_server_id
+
         def _task() -> None:
             self._save_active_server_config()
-            cfg = self.server_cfg
+            cfg = dict(self.server_cfg)  # 拷贝一份
             steamcmd_dir = self.var_steamcmd_dir.get().strip() or DEFAULT_STEAMCMD_DIR
 
             if cfg.get("update_on_startup"):
                 self.logger.info("启动时更新已开启 → 正在更新服务器...")
                 self._update_server_install(cfg, steamcmd_dir, validate=None)
 
-            if self._is_server_running():
-                raise RuntimeError("服务器已在运行中。")
+            if self._is_server_running_for(server_id):
+                raise RuntimeError("该服务器已在运行中。")
 
-            self._start_server_inline()
+            self._start_server_for(server_id, cfg)
 
         self._run_async(_task, label="启动服务器")
 
     def stop_server_safe(self) -> None:
-        """安全停止服务器（先 SaveWorld → DoExit → 等待 → 强制终止）"""
+        """安全停止当前选中的服务器"""
+        server_id = self.active_server_id
+
         def _task() -> None:
             self._save_active_server_config()
-            self._stop_requested.set()
-            self._stop_server_impl()
+            stop_flag = self._stop_requested_flags.setdefault(server_id, threading.Event())
+            stop_flag.set()
+            self._stop_server_for(server_id)
 
         self._run_async(_task, label="停止服务器")
 
@@ -1239,20 +1255,23 @@ class ServerManagerApp:
 
     def update_and_restart_safe(self) -> None:
         """安全停止 → 更新 → 重新启动"""
+        server_id = self.active_server_id
+
         def _task() -> None:
             self._save_active_server_config()
-            cfg = self.server_cfg
+            cfg = dict(self.server_cfg)
             steamcmd_dir = self.var_steamcmd_dir.get().strip() or DEFAULT_STEAMCMD_DIR
 
-            if self._is_server_running():
+            if self._is_server_running_for(server_id):
                 self.logger.info("服务器运行中 → 安全停止后更新...")
-                self._stop_requested.set()
-                self._stop_server_impl()
+                stop_flag = self._stop_requested_flags.setdefault(server_id, threading.Event())
+                stop_flag.set()
+                self._stop_server_for(server_id)
 
             self._update_server_install(cfg, steamcmd_dir, validate=None)
 
             self.logger.info("更新完成 → 正在重新启动服务器...")
-            self._start_server_inline()
+            self._start_server_for(server_id, cfg)
 
         self._run_async(_task, label="更新并重启")
 
@@ -1277,12 +1296,11 @@ class ServerManagerApp:
         self.update_and_restart_safe()
 
     # ------------------------------------------------------------------
-    # 服务器操作内部实现
+    # 服务器操作内部实现（支持多服务器隔离）
     # ------------------------------------------------------------------
 
-    def _start_server_inline(self) -> None:
-        """在当前线程中直接启动服务器进程（用于 restart / auto-restart）"""
-        cfg = self.server_cfg
+    def _start_server_for(self, server_id: str, cfg: Dict[str, Any]) -> None:
+        """启动指定 server_id 的服务器（可从任意线程调用）"""
         server_dir = Path(cfg["server_dir"])
         exe = ark_server_exe(server_dir)
 
@@ -1292,84 +1310,93 @@ class ServerManagerApp:
         if cfg.get("enable_rcon") and not (cfg.get("admin_password") or "").strip():
             raise RuntimeError("管理员密码为空。启用 RCON 前必须设置管理员密码。")
 
-        # 更新 baseline + 将必要设置写入 staging INI
-        ensure_baseline(self.app_base, self.active_server_id, server_dir, self.logger, refresh=True)
-        ensure_required_server_settings(
-            cfg, self.app_base, self.active_server_id, server_dir, self.logger
-        )
-        apply_staging_to_server(self.app_base, self.active_server_id, server_dir, self.logger)
+        ensure_baseline(self.app_base, server_id, server_dir, self.logger, refresh=True)
+        ensure_required_server_settings(cfg, self.app_base, server_id, server_dir, self.logger)
+        apply_staging_to_server(self.app_base, server_id, server_dir, self.logger)
 
-        self._stop_requested.clear()
+        stop_flag = self._stop_requested_flags.setdefault(server_id, threading.Event())
+        stop_flag.clear()
+
         cmd = build_server_command(cfg)
-        self.logger.info("启动服务器命令:")
+        self.logger.info(f"[{server_id[:8]}] 启动服务器命令:")
         self.logger.info(" ".join(cmd))
 
-        _CREATE_NO_WINDOW = getattr(__import__("subprocess"), "CREATE_NO_WINDOW", 0)
-        with self._server_proc_lock:
-            if self._server_proc and self._server_proc.poll() is None:
-                raise RuntimeError("服务器已在运行中。")
-            self._stop_log_reader.clear()
-            self._server_proc = __import__("subprocess").Popen(
+        _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        with self._server_procs_lock:
+            existing = self._server_procs.get(server_id)
+            if existing and existing.poll() is None:
+                raise RuntimeError("该服务器已在运行中。")
+
+            stop_log = threading.Event()
+            self._stop_log_readers[server_id] = stop_log
+
+            proc = subprocess.Popen(
                 cmd,
                 cwd=str(exe.parent),
-                stdout=__import__("subprocess").PIPE,
-                stderr=__import__("subprocess").STDOUT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
                 universal_newlines=True,
                 creationflags=_CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
+            self._server_procs[server_id] = proc
+            self._running_server_configs[server_id] = dict(cfg)
 
-        threading.Thread(target=self._server_log_reader, daemon=True).start()
+        threading.Thread(
+            target=self._server_log_reader_for, args=(server_id,), daemon=True
+        ).start()
         self.root.after(0, self._refresh_buttons)
 
-    def _stop_server_impl(self) -> None:
-        """实际停止服务器进程（RCON SaveWorld → DoExit → 强制终止）"""
-        with self._server_proc_lock:
-            p = self._server_proc
+    def _stop_server_for(self, server_id: str) -> None:
+        """停止指定 server_id 的服务器进程"""
+        with self._server_procs_lock:
+            p = self._server_procs.get(server_id)
 
         if not p or p.poll() is not None:
-            self.logger.info("服务器未运行。")
+            self.logger.info(f"[{server_id[:8]}] 服务器未运行。")
             return
 
-        cfg = self.server_cfg
+        cfg = self._running_server_configs.get(server_id) or self.config_manager.load_server_config(server_id)
 
         if cfg.get("enable_rcon"):
             for rcon_cmd in ("SaveWorld", "DoExit"):
                 try:
-                    self.logger.info(f"RCON: {rcon_cmd}")
-                    self._rcon_exec(rcon_cmd, timeout=6.0)
+                    self.logger.info(f"[{server_id[:8]}] RCON: {rcon_cmd}")
+                    self._rcon_exec_for(cfg, rcon_cmd, timeout=6.0)
                 except Exception as e:
-                    self.logger.warning(f"RCON {rcon_cmd} 失败: {e}")
+                    self.logger.warning(f"[{server_id[:8]}] RCON {rcon_cmd} 失败: {e}")
 
         t_end = time.time() + 20
         while time.time() < t_end and p.poll() is None:
             time.sleep(0.5)
 
         if p.poll() is None:
-            self.logger.info("正在强制终止服务器进程...")
-            self._stop_log_reader.set()
+            self.logger.info(f"[{server_id[:8]}] 正在强制终止服务器进程...")
+            stop_log = self._stop_log_readers.get(server_id)
+            if stop_log:
+                stop_log.set()
             p.terminate()
             try:
                 p.wait(timeout=12)
-            except __import__("subprocess").TimeoutExpired:
-                self.logger.warning("terminate() 超时，执行 kill()...")
+            except subprocess.TimeoutExpired:
+                self.logger.warning(f"[{server_id[:8]}] terminate() 超时，执行 kill()...")
                 p.kill()
                 p.wait(timeout=5)
 
-        with self._server_proc_lock:
-            self._server_proc = None
+        with self._server_procs_lock:
+            self._server_procs.pop(server_id, None)
+            self._running_server_configs.pop(server_id, None)
+            self._stop_log_readers.pop(server_id, None)
 
-        self.logger.info("服务器已停止。")
+        self.logger.info(f"[{server_id[:8]}] 服务器已停止。")
 
         if cfg.get("backup_on_stop"):
             path = backup_server(cfg, self.app_base, self.logger)
             if path:
-                self.logger.info(f"停止时备份已完成: {path}")
+                self.logger.info(f"[{server_id[:8]}] 停止时备份已完成: {path}")
 
-        restore_baseline_to_server(
-            self.app_base, self.active_server_id, Path(cfg["server_dir"]), self.logger
-        )
+        restore_baseline_to_server(self.app_base, server_id, Path(cfg["server_dir"]), self.logger)
         self.root.after(0, self._refresh_buttons)
 
     def _update_server_install(
@@ -1391,19 +1418,21 @@ class ServerManagerApp:
         )
 
     def _rcon_exec(self, cmd: str, timeout: float = 4.0) -> str:
-        """发送一条 RCON 命令并返回响应文本"""
+        """发送 RCON 命令到当前选中配置的服务器"""
+        return self._rcon_exec_for(self.server_cfg, cmd, timeout)
+
+    def _rcon_exec_for(self, cfg: Dict[str, Any], cmd: str, timeout: float = 4.0) -> str:
+        """发送一条 RCON 命令到指定配置的服务器"""
         from ..rcon.client import RCONClient
-        cfg = self.server_cfg
+        import socket as _socket
+
         host = cfg.get("rcon_host") or "127.0.0.1"
         port = int(cfg.get("rcon_port", 27020))
         password = (cfg.get("admin_password") or "").strip()
 
         client = RCONClient(host=host, port=port, password=password)
-        client._protocol._socket = None  # type: ignore[attr-defined]
-        # 重新建立连接（每次独立连接，简单可靠）
         proto = client._protocol
         proto._socket = None
-        import socket as _socket
         sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
         sock.settimeout(timeout)
         sock.connect((host, port))
@@ -1417,35 +1446,44 @@ class ServerManagerApp:
         return (response or "").strip()
 
     # ------------------------------------------------------------------
-    # 自动更新调度器
+    # 自动更新调度器（每服务器独立）
     # ------------------------------------------------------------------
 
     def _sync_auto_update_scheduler(self) -> None:
-        """根据配置启动或停止自动更新调度线程"""
+        """根据当前配置启动或停止该服务器的自动更新调度线程"""
         try:
             self._save_active_server_config()
         except Exception:
             return
 
+        server_id = self.active_server_id
         enabled = bool(self.server_cfg.get("auto_update_restart", False))
 
         if enabled:
-            # 先停止旧线程再启动
-            self._auto_update_stop.set()
-            self._auto_update_stop.clear()
-            self._auto_update_thread = threading.Thread(
-                target=self._auto_update_loop, daemon=True, name="AutoUpdateLoop"
+            old_stop = self._auto_update_stops.get(server_id)
+            if old_stop:
+                old_stop.set()
+            new_stop = threading.Event()
+            self._auto_update_stops[server_id] = new_stop
+            t = threading.Thread(
+                target=self._auto_update_loop_for,
+                args=(server_id, new_stop),
+                daemon=True,
+                name=f"AutoUpdate-{server_id[:8]}",
             )
-            self._auto_update_thread.start()
-            self.logger.info("自动更新调度器已启动。")
+            self._auto_update_threads[server_id] = t
+            t.start()
+            self.logger.info(f"[{server_id[:8]}] 自动更新调度器已启动。")
         else:
-            self._auto_update_stop.set()
-            self.logger.info("自动更新调度器已停止。")
+            old_stop = self._auto_update_stops.get(server_id)
+            if old_stop:
+                old_stop.set()
+            self.logger.info(f"[{server_id[:8]}] 自动更新调度器已停止。")
 
-    def _auto_update_loop(self) -> None:
-        """后台线程：等待到计划时间后触发更新重启"""
+    def _auto_update_loop_for(self, server_id: str, stop_event: threading.Event) -> None:
+        """后台线程：等待到计划时间后触发指定服务器的更新重启"""
         import re as _re
-        from datetime import datetime, time as dt_time
+        from datetime import datetime, time as dt_time, timedelta
 
         def _parse_hhmm(value: str):
             clean = (value or "").strip()
@@ -1454,27 +1492,38 @@ class ServerManagerApp:
                 return dt_time(int(h), int(m))
             return dt_time(3, 0)
 
-        while not self._auto_update_stop.is_set():
-            schedule_time = _parse_hhmm(self.server_cfg.get("auto_update_time") or "03:00")
+        while not stop_event.is_set():
+            cfg = self.config_manager.load_server_config(server_id)
+            schedule_time = _parse_hhmm(cfg.get("auto_update_time") or "03:00")
             now = datetime.now()
             candidate = now.replace(
                 hour=schedule_time.hour, minute=schedule_time.minute, second=0, microsecond=0
             )
             if candidate <= now:
-                from datetime import timedelta
                 candidate += timedelta(days=1)
             wait_sec = max(1.0, (candidate - now).total_seconds())
 
-            if self._auto_update_stop.wait(timeout=wait_sec):
+            if stop_event.wait(timeout=wait_sec):
                 return
-            if self._auto_update_stop.is_set():
+            if stop_event.is_set():
                 return
             if self._busy:
-                self.logger.info("自动更新已跳过：应用正忙。")
+                self.logger.info(f"[{server_id[:8]}] 自动更新已跳过：应用正忙。")
                 continue
 
-            self.logger.info("自动更新触发 → 更新并重启（安全）。")
-            self.root.after(0, self.update_and_restart_safe)
+            self.logger.info(f"[{server_id[:8]}] 自动更新触发 → 更新并重启（安全）。")
+
+            def _do_update(sid=server_id):
+                cfg_now = self.config_manager.load_server_config(sid)
+                steamcmd_dir = self.global_cfg.get("steamcmd_dir") or DEFAULT_STEAMCMD_DIR
+                if self._is_server_running_for(sid):
+                    stop_flag = self._stop_requested_flags.setdefault(sid, threading.Event())
+                    stop_flag.set()
+                    self._stop_server_for(sid)
+                self._update_server_install(cfg_now, steamcmd_dir, validate=None)
+                self._start_server_for(sid, cfg_now)
+
+            self._run_async(_do_update, label=f"自动更新-{server_id[:8]}")
     
     def send_rcon(self) -> None:
         """Send RCON command."""
