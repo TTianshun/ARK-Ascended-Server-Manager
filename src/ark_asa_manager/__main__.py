@@ -108,7 +108,10 @@ def _relaunch_as_admin() -> bool:
             params = subprocess.list2cmdline(sys.argv[1:])
         else:
             executable = sys.executable
-            params = subprocess.list2cmdline([str(Path(__file__).resolve())] + sys.argv[1:])
+            # src layout 下直接执行 __main__.py 会丢失包导入路径，
+            # 因此提权后统一通过项目根目录 RUN.py 入口启动。
+            run_py = Path(__file__).resolve().parents[2] / "RUN.py"
+            params = subprocess.list2cmdline([str(run_py)] + sys.argv[1:])
 
         rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", executable, params, None, 1)
         return rc > 32
