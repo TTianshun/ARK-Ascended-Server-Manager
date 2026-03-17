@@ -13,10 +13,27 @@ import logging
 import json
 import uuid
 
+import os
+import subprocess
+import time
+
 from ..core import ConfigManager, StorageManager, ProcessManager
+from ..core.server_ops import (
+    ark_server_exe,
+    apply_staging_to_server,
+    backup_server,
+    build_server_command,
+    ensure_baseline,
+    ensure_required_server_settings,
+    restore_baseline_to_server,
+)
 from ..models import ServerConfig
+from ..steam.manager import SteamManager
 from ..utils import get_logger
 from ..utils.constants import (
+    AUTO_RESTART_DELAY_SEC,
+    AUTO_RESTART_EXIT_CODES,
+    ARK_ASA_APP_ID,
     AUTOSAVE_DEBOUNCE_MS,
     DEFAULT_MAP,
     DEFAULT_MAX_PLAYERS,
@@ -192,6 +209,16 @@ class ServerManagerApp:
         self._autosave_guard = False
         self._busy = False
         self._async_thread: Optional[threading.Thread] = None
+
+        # 服务器进程管理
+        self._server_proc: Optional[subprocess.Popen] = None
+        self._server_proc_lock = threading.Lock()
+        self._stop_log_reader = threading.Event()
+        self._stop_requested = threading.Event()
+
+        # 自动更新调度
+        self._auto_update_thread: Optional[threading.Thread] = None
+        self._auto_update_stop = threading.Event()
     
     def _init_variables(self) -> None:
         """Initialize all tkinter variables."""
@@ -447,6 +474,32 @@ class ServerManagerApp:
                 mods_editor.insert("1.0", str(cfg.get("mods") or ""))
             except Exception:
                 pass
+
+        # ---- 高级设置 ----
+        self.var_cluster_enable.set(bool(cfg.get("cluster_enable", False)))
+        self.var_cluster_id.set(str(cfg.get("cluster_id") or ""))
+        self.var_cluster_custom_path_enable.set(bool(cfg.get("cluster_custom_path_enable", False)))
+        self.var_cluster_dir_override.set(str(cfg.get("cluster_dir_override") or ""))
+        self.var_no_transfer_from_filtering.set(bool(cfg.get("no_transfer_from_filtering", False)))
+        self.var_alt_save_directory_name.set(str(cfg.get("alt_save_directory_name") or ""))
+        self.var_server_platform_crossplay.set(bool(cfg.get("server_platform_crossplay", False)))
+        self.var_dino_mode.set(str(cfg.get("dino_mode") or ""))
+        self.var_log_servergamelog.set(bool(cfg.get("log_servergamelog", False)))
+        self.var_log_servergamelogincludetribelogs.set(bool(cfg.get("log_servergamelogincludetribelogs", False)))
+        self.var_log_serverrconoutputtribelogs.set(bool(cfg.get("log_serverrconoutputtribelogs", False)))
+        self.var_m_disablecustomcosmetics.set(bool(cfg.get("mech_disablecustomcosmetics", False)))
+        self.var_m_autodestroystructures.set(bool(cfg.get("mech_autodestroystructures", False)))
+        self.var_m_forcerespawndinos.set(bool(cfg.get("mech_forcerespawndinos", False)))
+        self.var_m_nowildbabies.set(bool(cfg.get("mech_nowildbabies", False)))
+        self.var_m_forceallowcaveflyers.set(bool(cfg.get("mech_forceallowcaveflyers", False)))
+        self.var_m_disabledinonetrangescaling.set(bool(cfg.get("mech_disabledinonetrangescaling", False)))
+        self.var_m_unstasisdinoobstructioncheck.set(bool(cfg.get("mech_unstasisdinoobstructioncheck", False)))
+        self.var_m_alwaystickdedicatedskeletalmeshes.set(bool(cfg.get("mech_alwaystickdedicatedskeletalmeshes", False)))
+        self.var_m_disablecharactertracker.set(bool(cfg.get("mech_disablecharactertracker", False)))
+        self.var_m_useservernetspeedcheck.set(bool(cfg.get("mech_useservernetspeedcheck", False)))
+        self.var_m_stasiskeepcontrollers.set(bool(cfg.get("mech_stasiskeepcontrollers", False)))
+        self.var_m_ignoredupeditems.set(bool(cfg.get("mech_ignoredupeditems", False)))
+
         self._autosave_guard = False
 
     def _refresh_server_profile_selector(self) -> None:
@@ -503,6 +556,7 @@ class ServerManagerApp:
         cfg = self.config_manager.default_server_config()
         cfg.update(
             {
+                # ---- 基础设置 ----
                 "server_dir": self.var_server_dir.get().strip() or DEFAULT_SERVER_DIR,
                 "map_name": map_name,
                 "server_name": self.var_server_name.get().strip() or DEFAULT_SERVER_NAME,
@@ -526,6 +580,33 @@ class ServerManagerApp:
                 "auto_update_time": self.var_auto_update_time.get().strip() or DEFAULT_SCHEDULE_TIME,
                 "update_on_startup": self.var_update_on_startup.get(),
                 "hide_gameanalytics_console_logs": self.var_hide_gameanalytics_console_logs.get(),
+                # ---- 集群设置 ----
+                "cluster_enable": self.var_cluster_enable.get(),
+                "cluster_id": self.var_cluster_id.get().strip(),
+                "cluster_custom_path_enable": self.var_cluster_custom_path_enable.get(),
+                "cluster_dir_override": self.var_cluster_dir_override.get().strip(),
+                "no_transfer_from_filtering": self.var_no_transfer_from_filtering.get(),
+                "alt_save_directory_name": self.var_alt_save_directory_name.get().strip(),
+                # ---- 平台 ----
+                "server_platform_crossplay": self.var_server_platform_crossplay.get(),
+                # ---- 恐龙/日志 ----
+                "dino_mode": self.var_dino_mode.get(),
+                "log_servergamelog": self.var_log_servergamelog.get(),
+                "log_servergamelogincludetribelogs": self.var_log_servergamelogincludetribelogs.get(),
+                "log_serverrconoutputtribelogs": self.var_log_serverrconoutputtribelogs.get(),
+                # ---- 力学/性能 ----
+                "mech_disablecustomcosmetics": self.var_m_disablecustomcosmetics.get(),
+                "mech_autodestroystructures": self.var_m_autodestroystructures.get(),
+                "mech_forcerespawndinos": self.var_m_forcerespawndinos.get(),
+                "mech_nowildbabies": self.var_m_nowildbabies.get(),
+                "mech_forceallowcaveflyers": self.var_m_forceallowcaveflyers.get(),
+                "mech_disabledinonetrangescaling": self.var_m_disabledinonetrangescaling.get(),
+                "mech_unstasisdinoobstructioncheck": self.var_m_unstasisdinoobstructioncheck.get(),
+                "mech_alwaystickdedicatedskeletalmeshes": self.var_m_alwaystickdedicatedskeletalmeshes.get(),
+                "mech_disablecharactertracker": self.var_m_disablecharactertracker.get(),
+                "mech_useservernetspeedcheck": self.var_m_useservernetspeedcheck.get(),
+                "mech_stasiskeepcontrollers": self.var_m_stasiskeepcontrollers.get(),
+                "mech_ignoredupeditems": self.var_m_ignoredupeditems.get(),
             }
         )
         return cfg
@@ -955,9 +1036,7 @@ class ServerManagerApp:
     def _run_async(self, task_fn, *, label: str = "操作") -> None:
         """
         在守护线程中执行 task_fn，期间锁定操作按钮防止重复点击。
-
-        task_fn 签名：() -> None
-        执行完成（无论成功或失败）后在 UI 线程中恢复按钮状态。
+        执行完成后在 UI 线程中恢复按钮状态。
         """
         if self._busy:
             self.logger.warning("已有操作正在进行，忽略新请求: %s", label)
@@ -968,8 +1047,8 @@ class ServerManagerApp:
                 task_fn()
             except Exception as e:
                 self.logger.error("%s 执行异常: %s", label, e)
+                self.root.after(0, lambda msg=str(e): messagebox.showerror(label, msg))
             finally:
-                # 必须通过 root.after 在 UI 线程中修改 UI 状态
                 self.root.after(0, lambda: self._set_busy(False))
 
         self._set_busy(True)
@@ -989,62 +1068,404 @@ class ServerManagerApp:
         self.root.after(0, _append)
 
     # ------------------------------------------------------------------
-    # 服务器操作（均通过 _run_async 在后台线程中执行）
+    # 服务器进程状态辅助
+    # ------------------------------------------------------------------
+
+    def _is_server_running(self) -> bool:
+        """线程安全地检查服务器进程是否正在运行"""
+        with self._server_proc_lock:
+            p = self._server_proc
+        return p is not None and p.poll() is None
+
+    def _refresh_buttons(self) -> None:
+        """刷新操作按钮状态（在 UI 线程中调用）"""
+        self._set_busy(self._busy)
+
+    def _server_log_reader(self) -> None:
+        """后台线程：将服务器进程的 stdout 实时写入控制台日志"""
+        with self._server_proc_lock:
+            p = self._server_proc
+        if not p or not p.stdout:
+            return
+
+        try:
+            for line in p.stdout:
+                if self._stop_log_reader.is_set():
+                    break
+                stripped = line.rstrip()
+                # 按需过滤 GameAnalytics 噪音
+                if self.server_cfg.get("hide_gameanalytics_console_logs") and \
+                        "gameanalytics" in stripped.lower():
+                    continue
+                self.logger.info(stripped)
+        except Exception as e:
+            self.logger.debug(f"日志读取器停止: {e}")
+        finally:
+            code: Optional[int] = None
+            try:
+                code = p.poll()
+                if code is not None:
+                    self.logger.info(f"服务器已退出，退出码: {code}")
+            except Exception:
+                pass
+            with self._server_proc_lock:
+                if self._server_proc is p:
+                    self._server_proc = None
+
+            self.root.after(0, self._refresh_buttons)
+            self._maybe_auto_restart(code)
+
+    def _maybe_auto_restart(self, exit_code: Optional[int]) -> None:
+        """若退出码符合自动重启条件，在延迟后重新启动服务器"""
+        if exit_code is None:
+            return
+        if exit_code not in AUTO_RESTART_EXIT_CODES:
+            return
+        if self._stop_requested.is_set():
+            return
+        if self._busy:
+            return
+
+        self.logger.info(
+            f"服务器以代码 {exit_code} 退出 → {AUTO_RESTART_DELAY_SEC}s 后自动重启..."
+        )
+
+        def _delayed_restart() -> None:
+            time.sleep(AUTO_RESTART_DELAY_SEC)
+            try:
+                self._start_server_inline()
+            except Exception as e:
+                self.logger.error(f"自动重启失败: {e}")
+
+        threading.Thread(target=_delayed_restart, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # 服务器操作 — 公共方法（后台线程执行）
     # ------------------------------------------------------------------
 
     def first_install(self) -> None:
-        """Install server for the first time."""
+        """首次安装：安装依赖 + 证书 + SteamCMD + ASA 服务器"""
         def _task() -> None:
-            self.logger.info("Starting first install")
-            self._log_console("首次安装：功能待实现")
+            self._save_active_server_config()
+            cfg = self.server_cfg
+            steamcmd_dir = self.var_steamcmd_dir.get().strip() or DEFAULT_STEAMCMD_DIR
+
+            from ..utils.windows import ensure_dependencies, install_asa_certificates, is_admin
+            if not is_admin():
+                self.logger.warning("警告：未以管理员身份运行，安装可能失败。")
+
+            ensure_dependencies(self.logger)
+            install_asa_certificates(self.logger)
+
+            steam = SteamManager(Path(steamcmd_dir))
+            steam.update_app(
+                install_dir=Path(cfg["server_dir"]),
+                logger=self.logger,
+                app_id=ARK_ASA_APP_ID,
+                validate=False,
+                lock_root=self.app_base,
+            )
+
+            exe = ark_server_exe(Path(cfg["server_dir"]))
+            self.logger.info(
+                f"服务器 EXE: {exe}  ({'存在' if exe.exists() else '未找到'})"
+            )
+
         self._run_async(_task, label="首次安装")
-    
+
     def start_server(self) -> None:
-        """Start the server."""
+        """启动服务器"""
         def _task() -> None:
-            self.logger.info("Starting server")
-            self._log_console("启动服务器：功能待实现")
+            self._save_active_server_config()
+            cfg = self.server_cfg
+            steamcmd_dir = self.var_steamcmd_dir.get().strip() or DEFAULT_STEAMCMD_DIR
+
+            if cfg.get("update_on_startup"):
+                self.logger.info("启动时更新已开启 → 正在更新服务器...")
+                self._update_server_install(cfg, steamcmd_dir, validate=None)
+
+            if self._is_server_running():
+                raise RuntimeError("服务器已在运行中。")
+
+            self._start_server_inline()
+
         self._run_async(_task, label="启动服务器")
-    
+
     def stop_server_safe(self) -> None:
-        """Stop the server safely."""
+        """安全停止服务器（先 SaveWorld → DoExit → 等待 → 强制终止）"""
         def _task() -> None:
-            self.logger.info("Stopping server safely")
-            self._log_console("停止服务器：功能待实现")
+            self._save_active_server_config()
+            self._stop_requested.set()
+            self._stop_server_impl()
+
         self._run_async(_task, label="停止服务器")
-    
+
     def update_validate(self) -> None:
-        """Update and validate server files."""
+        """更新并验证服务器文件"""
         def _task() -> None:
-            self.logger.info("Updating and validating server")
-            self._log_console("更新并验证：功能待实现")
-        self._run_async(_task, label="更新验证")
-    
+            self._save_active_server_config()
+            cfg = self.server_cfg
+            steamcmd_dir = self.var_steamcmd_dir.get().strip() or DEFAULT_STEAMCMD_DIR
+            validate = bool(cfg.get("validate_on_update", False))
+            self._update_server_install(cfg, steamcmd_dir, validate=validate)
+
+        self._run_async(_task, label="更新/验证")
+
     def update_and_restart_safe(self) -> None:
-        """Update and restart server safely."""
+        """安全停止 → 更新 → 重新启动"""
         def _task() -> None:
-            self.logger.info("Updating and restarting server")
-            self._log_console("更新并重启：功能待实现")
-        self._run_async(_task, label="更新重启")
-    
+            self._save_active_server_config()
+            cfg = self.server_cfg
+            steamcmd_dir = self.var_steamcmd_dir.get().strip() or DEFAULT_STEAMCMD_DIR
+
+            if self._is_server_running():
+                self.logger.info("服务器运行中 → 安全停止后更新...")
+                self._stop_requested.set()
+                self._stop_server_impl()
+
+            self._update_server_install(cfg, steamcmd_dir, validate=None)
+
+            self.logger.info("更新完成 → 正在重新启动服务器...")
+            self._start_server_inline()
+
+        self._run_async(_task, label="更新并重启")
+
     def backup_now(self) -> None:
-        """Create a backup now."""
+        """立即创建备份"""
         def _task() -> None:
-            self.logger.info("Creating backup")
-            self._log_console("立即备份：功能待实现")
+            self._save_active_server_config()
+            path = backup_server(self.server_cfg, self.app_base, self.logger)
+            if path:
+                self.root.after(
+                    0, lambda p=path: messagebox.showinfo("备份完成", f"备份已保存到:\n{p}")
+                )
+
         self._run_async(_task, label="立即备份")
-    
+
     def auto_update_test(self) -> None:
-        """Test the auto-update scheduler."""
-        def _task() -> None:
-            self.logger.info("Testing auto-update scheduler")
-            self._log_console("测试自动更新：功能待实现")
-        self._run_async(_task, label="测试自动更新")
+        """手动触发自动更新流程（测试用）"""
+        if self._busy:
+            messagebox.showwarning("忙碌", "当前有操作正在进行，请稍后再试。")
+            return
+        self.logger.info("手动触发 → 更新并重启（安全）。")
+        self.update_and_restart_safe()
+
+    # ------------------------------------------------------------------
+    # 服务器操作内部实现
+    # ------------------------------------------------------------------
+
+    def _start_server_inline(self) -> None:
+        """在当前线程中直接启动服务器进程（用于 restart / auto-restart）"""
+        cfg = self.server_cfg
+        server_dir = Path(cfg["server_dir"])
+        exe = ark_server_exe(server_dir)
+
+        if not exe.exists():
+            raise FileNotFoundError(f"服务器 EXE 不存在: {exe}")
+
+        if cfg.get("enable_rcon") and not (cfg.get("admin_password") or "").strip():
+            raise RuntimeError("管理员密码为空。启用 RCON 前必须设置管理员密码。")
+
+        # 更新 baseline + 将必要设置写入 staging INI
+        ensure_baseline(self.app_base, self.active_server_id, server_dir, self.logger, refresh=True)
+        ensure_required_server_settings(
+            cfg, self.app_base, self.active_server_id, server_dir, self.logger
+        )
+        apply_staging_to_server(self.app_base, self.active_server_id, server_dir, self.logger)
+
+        self._stop_requested.clear()
+        cmd = build_server_command(cfg)
+        self.logger.info("启动服务器命令:")
+        self.logger.info(" ".join(cmd))
+
+        _CREATE_NO_WINDOW = getattr(__import__("subprocess"), "CREATE_NO_WINDOW", 0)
+        with self._server_proc_lock:
+            if self._server_proc and self._server_proc.poll() is None:
+                raise RuntimeError("服务器已在运行中。")
+            self._stop_log_reader.clear()
+            self._server_proc = __import__("subprocess").Popen(
+                cmd,
+                cwd=str(exe.parent),
+                stdout=__import__("subprocess").PIPE,
+                stderr=__import__("subprocess").STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+                creationflags=_CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+
+        threading.Thread(target=self._server_log_reader, daemon=True).start()
+        self.root.after(0, self._refresh_buttons)
+
+    def _stop_server_impl(self) -> None:
+        """实际停止服务器进程（RCON SaveWorld → DoExit → 强制终止）"""
+        with self._server_proc_lock:
+            p = self._server_proc
+
+        if not p or p.poll() is not None:
+            self.logger.info("服务器未运行。")
+            return
+
+        cfg = self.server_cfg
+
+        if cfg.get("enable_rcon"):
+            for rcon_cmd in ("SaveWorld", "DoExit"):
+                try:
+                    self.logger.info(f"RCON: {rcon_cmd}")
+                    self._rcon_exec(rcon_cmd, timeout=6.0)
+                except Exception as e:
+                    self.logger.warning(f"RCON {rcon_cmd} 失败: {e}")
+
+        t_end = time.time() + 20
+        while time.time() < t_end and p.poll() is None:
+            time.sleep(0.5)
+
+        if p.poll() is None:
+            self.logger.info("正在强制终止服务器进程...")
+            self._stop_log_reader.set()
+            p.terminate()
+            try:
+                p.wait(timeout=12)
+            except __import__("subprocess").TimeoutExpired:
+                self.logger.warning("terminate() 超时，执行 kill()...")
+                p.kill()
+                p.wait(timeout=5)
+
+        with self._server_proc_lock:
+            self._server_proc = None
+
+        self.logger.info("服务器已停止。")
+
+        if cfg.get("backup_on_stop"):
+            path = backup_server(cfg, self.app_base, self.logger)
+            if path:
+                self.logger.info(f"停止时备份已完成: {path}")
+
+        restore_baseline_to_server(
+            self.app_base, self.active_server_id, Path(cfg["server_dir"]), self.logger
+        )
+        self.root.after(0, self._refresh_buttons)
+
+    def _update_server_install(
+        self,
+        cfg: Dict[str, Any],
+        steamcmd_dir: str,
+        validate: Optional[bool],
+    ) -> None:
+        """运行 SteamCMD app_update"""
+        if validate is None:
+            validate = bool(cfg.get("validate_on_update", False))
+        steam = SteamManager(Path(steamcmd_dir))
+        steam.update_app(
+            install_dir=Path(cfg["server_dir"]),
+            logger=self.logger,
+            app_id=ARK_ASA_APP_ID,
+            validate=validate,
+            lock_root=self.app_base,
+        )
+
+    def _rcon_exec(self, cmd: str, timeout: float = 4.0) -> str:
+        """发送一条 RCON 命令并返回响应文本"""
+        from ..rcon.client import RCONClient
+        cfg = self.server_cfg
+        host = cfg.get("rcon_host") or "127.0.0.1"
+        port = int(cfg.get("rcon_port", 27020))
+        password = (cfg.get("admin_password") or "").strip()
+
+        client = RCONClient(host=host, port=port, password=password)
+        client._protocol._socket = None  # type: ignore[attr-defined]
+        # 重新建立连接（每次独立连接，简单可靠）
+        proto = client._protocol
+        proto._socket = None
+        import socket as _socket
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect((host, port))
+        proto._socket = sock
+        try:
+            if not proto.authenticate(password):
+                raise RuntimeError(f"RCON 认证失败 ({host}:{port})，请检查管理员密码。")
+            response = proto.execute_command(cmd)
+        finally:
+            proto.disconnect()
+        return (response or "").strip()
+
+    # ------------------------------------------------------------------
+    # 自动更新调度器
+    # ------------------------------------------------------------------
+
+    def _sync_auto_update_scheduler(self) -> None:
+        """根据配置启动或停止自动更新调度线程"""
+        try:
+            self._save_active_server_config()
+        except Exception:
+            return
+
+        enabled = bool(self.server_cfg.get("auto_update_restart", False))
+
+        if enabled:
+            # 先停止旧线程再启动
+            self._auto_update_stop.set()
+            self._auto_update_stop.clear()
+            self._auto_update_thread = threading.Thread(
+                target=self._auto_update_loop, daemon=True, name="AutoUpdateLoop"
+            )
+            self._auto_update_thread.start()
+            self.logger.info("自动更新调度器已启动。")
+        else:
+            self._auto_update_stop.set()
+            self.logger.info("自动更新调度器已停止。")
+
+    def _auto_update_loop(self) -> None:
+        """后台线程：等待到计划时间后触发更新重启"""
+        import re as _re
+        from datetime import datetime, time as dt_time
+
+        def _parse_hhmm(value: str):
+            clean = (value or "").strip()
+            if _re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", clean):
+                h, m = clean.split(":")
+                return dt_time(int(h), int(m))
+            return dt_time(3, 0)
+
+        while not self._auto_update_stop.is_set():
+            schedule_time = _parse_hhmm(self.server_cfg.get("auto_update_time") or "03:00")
+            now = datetime.now()
+            candidate = now.replace(
+                hour=schedule_time.hour, minute=schedule_time.minute, second=0, microsecond=0
+            )
+            if candidate <= now:
+                from datetime import timedelta
+                candidate += timedelta(days=1)
+            wait_sec = max(1.0, (candidate - now).total_seconds())
+
+            if self._auto_update_stop.wait(timeout=wait_sec):
+                return
+            if self._auto_update_stop.is_set():
+                return
+            if self._busy:
+                self.logger.info("自动更新已跳过：应用正忙。")
+                continue
+
+            self.logger.info("自动更新触发 → 更新并重启（安全）。")
+            self.root.after(0, self.update_and_restart_safe)
     
     def send_rcon(self) -> None:
         """Send RCON command."""
-        cmd = self.var_rcon_cmd.get()
-        self.logger.info(f"Sending RCON command: {cmd}")
+        cmd = self.var_rcon_cmd.get().strip()
+        if not cmd:
+            return
+
+        def _task() -> None:
+            self.logger.info(f"RCON> {cmd}")
+            try:
+                out = self._rcon_exec(cmd, timeout=5.0)
+                self.logger.info(out if out else "(无响应)")
+            except Exception as e:
+                self.logger.error(f"RCON 错误: {e}")
+            self.root.after(0, lambda: self.var_rcon_cmd.set(""))
+
+        self._run_async(_task, label="RCON")
     
     def _rcon_save_current(self) -> None:
         """Save the current RCON command to saved list."""

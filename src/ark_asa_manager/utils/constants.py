@@ -69,3 +69,21 @@ LOCKS_DIR_NAME = "locks"
 GLOBAL_CONFIG_NAME = "global.json"
 LEGACY_CONFIG_NAME = "config.json"
 SERVER_CONFIG_NAME = "server.json"
+
+# 服务器 INI 文件（相对于服务器安装目录）
+from pathlib import Path as _Path
+GAMEUSERSETTINGS_REL = _Path(r"ShooterGame\Saved\Config\WindowsServer\GameUserSettings.ini")
+GAME_INI_REL = _Path(r"ShooterGame\Saved\Config\WindowsServer\Game.ini")
+
+# 服务器进程自动重启
+AUTO_RESTART_EXIT_CODES: frozenset = frozenset({3})
+AUTO_RESTART_DELAY_SEC: float = 5.0
+
+# DirectX 遗留 DLL 列表（用于 DirectX 安装检测）
+DIRECTX_LEGACY_DLLS = [
+    "d3dx9_43.dll",
+    "d3dx10_43.dll",
+    "d3dx11_43.dll",
+    "d3dcompiler_43.dll",
+    "xinput1_3.dll",
+]

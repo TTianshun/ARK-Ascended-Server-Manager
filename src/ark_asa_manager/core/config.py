@@ -92,6 +92,7 @@ class ConfigManager:
 
     def default_server_config(self) -> Dict[str, Any]:
         return {
+            # ---- 基础设置 ----
             "schema_version": 12,
             "server_dir": DEFAULT_SERVER_DIR,
             "map_name": DEFAULT_MAP,
@@ -115,6 +116,36 @@ class ConfigManager:
             "auto_update_time": DEFAULT_SCHEDULE_TIME,
             "update_on_startup": False,
             "hide_gameanalytics_console_logs": True,
+            "custom_start_args": "",
+            # ---- 集群设置 ----
+            "cluster_enable": False,
+            "cluster_id": "",
+            "cluster_custom_path_enable": False,
+            "cluster_dir_override": "",
+            "no_transfer_from_filtering": False,
+            "alt_save_directory_name": "",
+            # ---- 平台 ----
+            "server_platform_crossplay": False,
+            "server_platform": "",
+            # ---- 恐龙模式 ----
+            "dino_mode": "",
+            # ---- 日志 ----
+            "log_servergamelog": False,
+            "log_servergamelogincludetribelogs": False,
+            "log_serverrconoutputtribelogs": False,
+            # ---- 力学/性能 ----
+            "mech_disablecustomcosmetics": False,
+            "mech_autodestroystructures": False,
+            "mech_forcerespawndinos": False,
+            "mech_nowildbabies": False,
+            "mech_forceallowcaveflyers": False,
+            "mech_disabledinonetrangescaling": False,
+            "mech_unstasisdinoobstructioncheck": False,
+            "mech_alwaystickdedicatedskeletalmeshes": False,
+            "mech_disablecharactertracker": False,
+            "mech_useservernetspeedcheck": False,
+            "mech_stasiskeepcontrollers": False,
+            "mech_ignoredupeditems": False,
         }
 
     def load_global_config(self) -> Dict[str, Any]:
