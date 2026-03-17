@@ -829,6 +829,15 @@ class ServerManagerApp:
         if selected_id == self.active_server_id:
             return
 
+        # 服务器运行时禁止切换配置
+        if self._is_server_running():
+            messagebox.showwarning(
+                "无法切换",
+                "服务器正在运行，请先停止服务器再切换配置文件。"
+            )
+            self._refresh_server_profile_selector()
+            return
+
         if not self._save_active_server_config(interactive=True):
             # Keep selection on current profile when validation fails
             self._refresh_server_profile_selector()
@@ -845,6 +854,14 @@ class ServerManagerApp:
     
     def _add_server_profile(self) -> None:
         """Add a new server profile."""
+        # 服务器运行时禁止添加（因为添加后会切换到新配置）
+        if self._is_server_running():
+            messagebox.showwarning(
+                "无法添加",
+                "服务器正在运行，请先停止服务器再添加新配置文件。"
+            )
+            return
+
         name = simpledialog.askstring("新建服务器", "显示名称：")
         if not name:
             return
@@ -902,6 +919,7 @@ class ServerManagerApp:
         """Rename the current server profile."""
         if not self.active_server_id:
             return
+        # 服务器运行时也允许重命名（只是改显示名称）
         current_label = self.var_server_profile.get() or "当前服务器"
         new_name = simpledialog.askstring("重命名服务器", "显示名称：", initialvalue=current_label)
         if not new_name:
@@ -918,6 +936,14 @@ class ServerManagerApp:
     
     def _remove_server_profile(self) -> None:
         """Remove the current server profile."""
+        # 服务器运行时禁止删除当前配置
+        if self._is_server_running():
+            messagebox.showwarning(
+                "无法删除",
+                "服务器正在运行，请先停止服务器再删除配置文件。"
+            )
+            return
+
         servers = [s for s in (self.global_cfg.get("servers") or []) if isinstance(s, dict)]
         if len(servers) <= 1:
             messagebox.showwarning("提示", "至少需要保留一个服务器配置。")
