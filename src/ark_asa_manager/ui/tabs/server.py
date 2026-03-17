@@ -8,6 +8,7 @@ from typing import Optional
 import os
 
 from .base import BaseTab
+from ...utils.constants import MAP_PRESETS, MAP_CUSTOM_SENTINEL
 
 
 class ServerTab(BaseTab):
@@ -107,6 +108,7 @@ class ServerTab(BaseTab):
         lf_server = ttk.LabelFrame(self.frame, text="服务器设置", padding=10)
         lf_server.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
         lf_server.columnconfigure(1, weight=1)
+        lf_server.columnconfigure(2, weight=1)
         
         vcmd = (self.app.root.register(self.app._validate_digits), "%P")
         
@@ -116,21 +118,34 @@ class ServerTab(BaseTab):
             lf_server,
             textvariable=self.app.var_map_preset,
             state="readonly",
+            values=[*MAP_PRESETS, MAP_CUSTOM_SENTINEL],
         )
         self.cmb_map.grid(row=0, column=1, sticky="ew", padx=6)
         self.cmb_map.bind("<<ComboboxSelected>>", lambda e: self.app._sync_map_mode())
+        ttk.Label(
+            lf_server,
+            text="从预设中选择地图；如果是自定义地图，请填写下一项",
+        ).grid(row=0, column=2, sticky="w")
         
         # Custom Map Name
         ttk.Label(lf_server, text="自定义地图名称").grid(row=1, column=0, sticky="w")
         ttk.Entry(lf_server, textvariable=self.app.var_map_custom).grid(
             row=1, column=1, sticky="ew", padx=6
         )
+        ttk.Label(
+            lf_server,
+            text="仅在地图预设选择 Custom... 时填写，例如：TheIsland_WP",
+        ).grid(row=1, column=2, sticky="w")
         
         # Server Name
         ttk.Label(lf_server, text="服务器名称").grid(row=2, column=0, sticky="w")
         ttk.Entry(lf_server, textvariable=self.app.var_server_name).grid(
             row=2, column=1, sticky="ew", padx=6
         )
+        ttk.Label(
+            lf_server,
+            text="将作为 SessionName 显示在服务器列表中",
+        ).grid(row=2, column=2, sticky="w")
         
         # Port settings
         ttk.Label(lf_server, text="端口").grid(row=3, column=0, sticky="w")
@@ -140,6 +155,7 @@ class ServerTab(BaseTab):
             validate="key",
             validatecommand=vcmd
         ).grid(row=3, column=1, sticky="ew", padx=6)
+        ttk.Label(lf_server, text="游戏端口（默认 7777，仅数字）").grid(row=3, column=2, sticky="w")
         
         ttk.Label(lf_server, text="查询端口").grid(row=4, column=0, sticky="w")
         ttk.Entry(
@@ -148,6 +164,7 @@ class ServerTab(BaseTab):
             validate="key",
             validatecommand=vcmd
         ).grid(row=4, column=1, sticky="ew", padx=6)
+        ttk.Label(lf_server, text="查询端口（默认 27015，仅数字）").grid(row=4, column=2, sticky="w")
         
         ttk.Label(lf_server, text="最大玩家数").grid(row=5, column=0, sticky="w")
         ttk.Entry(
@@ -156,6 +173,7 @@ class ServerTab(BaseTab):
             validate="key",
             validatecommand=vcmd
         ).grid(row=5, column=1, sticky="ew", padx=6)
+        ttk.Label(lf_server, text="推荐范围：1-200").grid(row=5, column=2, sticky="w")
         
         # Passwords
         ttk.Label(lf_server, text="横细庆密码").grid(row=6, column=0, sticky="w")
@@ -167,6 +185,7 @@ class ServerTab(BaseTab):
         ttk.Entry(lf_server, textvariable=self.app.var_admin_password).grid(
             row=7, column=1, sticky="ew", padx=6
         )
+        ttk.Label(lf_server, text="必填：用于管理员命令与 RCON").grid(row=7, column=2, sticky="w")
         
         # Mods
         ttk.Label(lf_server, text="MOD（用逗号分隔）").grid(
@@ -193,6 +212,10 @@ class ServerTab(BaseTab):
         xscroll = ttk.Scrollbar(mods_frame, orient="horizontal", command=self.txt_mods.xview)
         xscroll.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         self.txt_mods.configure(xscrollcommand=xscroll.set)
+        ttk.Label(
+            mods_frame,
+            text="示例：123456,987654（用英文逗号分隔）",
+        ).grid(row=2, column=0, sticky="w", pady=(2, 0))
         
         # Custom args
         ttk.Label(lf_server, text="自定义服务器参数（可选）").grid(
@@ -201,6 +224,10 @@ class ServerTab(BaseTab):
         ttk.Entry(lf_server, textvariable=self.app.var_custom_start_args).grid(
             row=9, column=1, sticky="ew", padx=6, pady=(8, 0)
         )
+        ttk.Label(
+            lf_server,
+            text="示例：-Parameter1 -Parameter2",
+        ).grid(row=9, column=2, sticky="w", pady=(8, 0))
         
         # --- Operations (right column) ---
         lf_ops = ttk.LabelFrame(self.frame, text="操作", padding=10)

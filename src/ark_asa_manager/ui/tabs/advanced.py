@@ -183,6 +183,7 @@ class AdvancedTab(BaseTab):
         lf = ttk.LabelFrame(self.frame, text="MOD 和 RCON", padding=10)
         lf.grid(row=2, column=1, sticky="nsew", padx=5, pady=5)
         lf.columnconfigure(1, weight=1)
+        lf.columnconfigure(2, weight=1)
         
         ttk.Checkbutton(
             lf,
@@ -196,10 +197,11 @@ class AdvancedTab(BaseTab):
             variable=self.app.var_enable_rcon
         ).grid(row=1, column=0, sticky="w", pady=(6, 0))
         
-        ttk.Label(lf, text="RCON主樋").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(lf, text="RCON主机").grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(lf, textvariable=self.app.var_rcon_host).grid(
             row=2, column=1, sticky="ew", padx=6, pady=(6, 0)
         )
+        ttk.Label(lf, text="默认 127.0.0.1").grid(row=2, column=2, sticky="w", pady=(6, 0))
         
         ttk.Label(lf, text="RCON端口").grid(row=3, column=0, sticky="w", pady=(6, 0))
         vcmd = (self.app.root.register(self.app._validate_digits), "%P")
@@ -209,6 +211,7 @@ class AdvancedTab(BaseTab):
             validate="key",
             validatecommand=vcmd
         ).grid(row=3, column=1, sticky="ew", padx=6, pady=(6, 0))
+        ttk.Label(lf, text="默认 27020，仅数字").grid(row=3, column=2, sticky="w", pady=(6, 0))
     
     def _build_tools_section(self) -> None:
         """Build tools/folder access section."""
