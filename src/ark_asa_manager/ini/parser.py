@@ -53,7 +53,7 @@ class INIParser:
     def parse_file(self, path: Path) -> bool:
         """解析INI文件"""
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, 'r', encoding='utf-8-sig') as f:
                 content = f.read()
             
             self.lines = []

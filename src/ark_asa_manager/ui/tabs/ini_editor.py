@@ -15,6 +15,7 @@ class IniEditorTab(BaseTab):
         """Build the INI Editor tab UI."""
         self.frame.columnconfigure(0, weight=2)
         self.frame.columnconfigure(1, weight=1)
+        self.frame.rowconfigure(1, weight=1)
         self.frame.rowconfigure(2, weight=1)
         
         # --- Top controls ---
@@ -40,7 +41,7 @@ class IniEditorTab(BaseTab):
         
         ttk.Button(
             ini_top,
-            text="打开流洋文档 + 上会模坻",
+            text="打开上游文件",
             command=self.app.open_loaded_ini
         ).grid(row=0, column=4, padx=4)
         
@@ -59,7 +60,7 @@ class IniEditorTab(BaseTab):
         tree_frame = ttk.Frame(self.frame)
         tree_frame.grid(row=1, column=0, rowspan=2, sticky="nsew", padx=(5, 2), pady=(0, 5))
         tree_frame.columnconfigure(0, weight=1)
-        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.rowconfigure(1, weight=1)
         
         ttk.Label(tree_frame, text="INI条目").grid(
             row=0, column=0, sticky="w", pady=(0, 4)
@@ -99,7 +100,7 @@ class IniEditorTab(BaseTab):
             state="readonly"
         ).grid(row=0, column=1, sticky="ew", padx=6)
         
-        ttk.Label(edit_frame, text="关锫").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(edit_frame, text="键").grid(row=1, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(
             edit_frame,
             textvariable=self.app.var_ini_key,
@@ -136,7 +137,7 @@ class IniEditorTab(BaseTab):
             row=0, column=1, sticky="ew", padx=6
         )
         
-        ttk.Label(add_frame, text="关锫").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(add_frame, text="键").grid(row=1, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(add_frame, textvariable=self.app.var_ini_add_key).grid(
             row=1, column=1, sticky="ew", padx=6, pady=(6, 0)
         )

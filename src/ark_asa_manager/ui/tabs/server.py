@@ -378,7 +378,7 @@ class ServerTab(BaseTab):
     
     def on_selected(self) -> None:
         """Called when tab is selected."""
-        pass
+        self.app._update_button_states()
     
     def on_deselected(self) -> None:
         """Called when tab is deselected."""

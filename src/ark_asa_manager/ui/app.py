@@ -25,8 +25,11 @@ from ..core.server_ops import (
     build_server_command,
     ensure_baseline,
     ensure_required_server_settings,
+    inject_lacc_to_server_config,
     restore_baseline_to_server,
+    staging_paths,
 )
+from ..ini.parser import INIParser
 from ..models import ServerConfig
 from ..steam.manager import SteamManager
 from ..utils import get_logger
@@ -45,6 +48,8 @@ from ..utils.constants import (
     DEFAULT_SERVER_DIR,
     DEFAULT_SERVER_NAME,
     DEFAULT_STEAMCMD_DIR,
+    GAMEUSERSETTINGS_REL,
+    GAME_INI_REL,
     MAP_PRESETS,
     MAP_CUSTOM_SENTINEL,
 )
@@ -55,7 +60,10 @@ from .tabs import (
     RconTab,
     DiscordTab,
     IniEditorTab,
+    ChatTab,
 )
+from ..chat import LACCWebSocketServer
+from ..chat.server import LACC_MOD_ID
 
 
 # Theme colors - migrated from original
@@ -125,6 +133,9 @@ class ServerManagerApp:
 
         # Ensure config is flushed on window close
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+
+        # 启动所有已配置自动更新的服务器的调度器
+        self._init_all_auto_update_schedulers()
         
         self.logger.info("Server Manager UI initialized")
     
@@ -207,7 +218,7 @@ class ServerManagerApp:
         self._server_profile_labels: List[str] = []
         self._autosave_after_id: Optional[str] = None
         self._autosave_guard = False
-        self._busy = False
+        self._busy_servers: set = set()
         self._async_thread: Optional[threading.Thread] = None
 
         # 多服务器进程管理（每个 server_id 独立）
@@ -226,6 +237,18 @@ class ServerManagerApp:
         self._auto_update_threads: Dict[str, threading.Thread] = {}
         # server_id -> threading.Event
         self._auto_update_stops: Dict[str, threading.Event] = {}
+
+        # 每服务器独立的控制台日志缓冲区
+        self._console_buffers: Dict[str, List[str]] = {}
+        self._console_buffers_lock = threading.Lock()
+
+        # LACC 跨服聊天 WebSocket 服务器
+        self._chat_server: Optional[LACCWebSocketServer] = None
+
+        # INI 编辑器状态
+        self._ini_parser: Optional[INIParser] = None
+        self._ini_loaded_path: Optional[Path] = None
+        self._ini_loaded_name: str = ""
     
     def _init_variables(self) -> None:
         """Initialize all tkinter variables."""
@@ -314,6 +337,12 @@ class ServerManagerApp:
         self.var_hide_gameanalytics_console_logs = tk.BooleanVar(master=self.root, value=True)
         self.var_status = tk.StringVar(master=self.root, value="就绪")
         
+        # 跨服聊天 (LACC)
+        self.var_chat_ws_port = tk.StringVar(master=self.root, value="8000")
+        self.var_chat_token = tk.StringVar(master=self.root)
+        self.var_chat_cluster_key = tk.StringVar(master=self.root)
+        self.var_chat_auto_start = tk.BooleanVar(master=self.root)
+
         # INI editor
         self.var_ini_filter = tk.StringVar(master=self.root)
         self.var_ini_section = tk.StringVar(master=self.root)
@@ -341,6 +370,7 @@ class ServerManagerApp:
         tab_rcon_frame = ttk.Frame(self.notebook, padding=10)
         tab_discord_frame = ttk.Frame(self.notebook, padding=10)
         tab_ini_frame = ttk.Frame(self.notebook, padding=10)
+        tab_chat_frame = ttk.Frame(self.notebook, padding=10)
         
         # Add tabs to notebook
         self.notebook.add(tab_server_frame, text="服务器")
@@ -348,6 +378,7 @@ class ServerManagerApp:
         self.notebook.add(tab_rcon_frame, text="RCON")
         self.notebook.add(tab_discord_frame, text="Discord")
         self.notebook.add(tab_ini_frame, text="INI编辑器")
+        self.notebook.add(tab_chat_frame, text="跨服聊天")
         
         # Initialize tab components
         self.tabs["server"] = ServerTab(tab_server_frame, self)
@@ -355,6 +386,7 @@ class ServerManagerApp:
         self.tabs["rcon"] = RconTab(tab_rcon_frame, self)
         self.tabs["discord"] = DiscordTab(tab_discord_frame, self)
         self.tabs["ini"] = IniEditorTab(tab_ini_frame, self)
+        self.tabs["chat"] = ChatTab(tab_chat_frame, self)
         
         # Build all tabs
         for tab in self.tabs.values():
@@ -368,7 +400,7 @@ class ServerManagerApp:
     
     def _create_console_area(self, parent: ttk.Frame) -> None:
         """Create the console output area at the bottom of the window."""
-        console_frame = ttk.LabelFrame(parent, text="控制台输出", padding=5)
+        self._console_label_frame = console_frame = ttk.LabelFrame(parent, text="控制台输出", padding=5)
         console_frame.grid(row=1, column=0, sticky="nsew", pady=(5, 0))
         console_frame.columnconfigure(0, weight=1)
         console_frame.rowconfigure(0, weight=1)
@@ -422,6 +454,8 @@ class ServerManagerApp:
         self._apply_server_config_to_vars(self.server_cfg)
         self._refresh_server_profile_selector()
         self._sync_map_mode()
+        self._switch_console_to(selected_id)
+        self._update_button_states()
 
     def _ensure_server_workspace(self, server_id: str) -> None:
         if not server_id:
@@ -439,6 +473,15 @@ class ServerManagerApp:
         steamcmd_dir = str(cfg.get("steamcmd_dir") or DEFAULT_STEAMCMD_DIR)
         self.var_steamcmd_dir.set(steamcmd_dir)
         self.var_auto_start_on_launch.set(bool(cfg.get("start_on_startup", False)))
+
+        # 跨服聊天
+        self.var_chat_ws_port.set(str(cfg.get("chat_ws_port", 8000)))
+        self.var_chat_token.set(str(cfg.get("chat_token") or ""))
+        self.var_chat_cluster_key.set(str(cfg.get("chat_cluster_key") or ""))
+        self.var_chat_auto_start.set(bool(cfg.get("chat_auto_start", False)))
+
+        if cfg.get("chat_auto_start"):
+            self.root.after(500, self._start_chat_server)
 
     def _apply_server_config_to_vars(self, cfg: Dict[str, Any]) -> None:
         self._autosave_guard = True
@@ -746,6 +789,16 @@ class ServerManagerApp:
 
         self.global_cfg["steamcmd_dir"] = self.var_steamcmd_dir.get().strip() or DEFAULT_STEAMCMD_DIR
         self.global_cfg["start_on_startup"] = self.var_auto_start_on_launch.get()
+
+        # 跨服聊天配置
+        try:
+            self.global_cfg["chat_ws_port"] = int(self.var_chat_ws_port.get().strip() or "8000")
+        except ValueError:
+            self.global_cfg["chat_ws_port"] = 8000
+        self.global_cfg["chat_token"] = self.var_chat_token.get().strip()
+        self.global_cfg["chat_cluster_key"] = self.var_chat_cluster_key.get().strip()
+        self.global_cfg["chat_auto_start"] = self.var_chat_auto_start.get()
+
         self.config_manager.save_global_config(self.global_cfg)
         return True
 
@@ -776,6 +829,10 @@ class ServerManagerApp:
             self.var_auto_start_on_launch,
             self.var_update_on_startup,
             self.var_hide_gameanalytics_console_logs,
+            self.var_chat_ws_port,
+            self.var_chat_token,
+            self.var_chat_cluster_key,
+            self.var_chat_auto_start,
         ]
 
         def traced(*_args: Any) -> None:
@@ -849,6 +906,8 @@ class ServerManagerApp:
         self.server_cfg = self.config_manager.load_server_config(selected_id)
         self._apply_server_config_to_vars(self.server_cfg)
         self._sync_map_mode()
+        self._switch_console_to(selected_id)
+        self._refresh_buttons()
         self.logger.debug("Server profile selected")
     
     def _add_server_profile(self) -> None:
@@ -1027,9 +1086,6 @@ class ServerManagerApp:
         """Update console logging filter state."""
         self.logger.debug("Syncing console filter")
     
-    def _sync_auto_update_scheduler(self) -> None:
-        """Update auto-update scheduler."""
-        self.logger.debug("Syncing auto-update scheduler")
     
     def _validate_digits(self, value: str) -> bool:
         """Validate that input contains only digits."""
@@ -1039,23 +1095,27 @@ class ServerManagerApp:
     # 异步执行工具
     # ------------------------------------------------------------------
 
-    def _set_busy(self, busy: bool) -> None:
-        """在 UI 线程中更新忙碌状态，并同步刷新操作按钮。"""
-        self._busy = busy
-        server_tab = self.tabs.get("server")
-        if server_tab is not None:
-            try:
-                server_tab.refresh_button_states()  # type: ignore[attr-defined]
-            except Exception:
-                pass
+    def _is_busy(self, server_id: str = "") -> bool:
+        """检查指定服务器是否有操作正在进行"""
+        sid = server_id or self.active_server_id
+        return sid in self._busy_servers
 
-    def _run_async(self, task_fn, *, label: str = "操作") -> None:
+    def _set_busy(self, server_id: str, busy: bool) -> None:
+        """更新指定服务器的忙碌状态，并刷新按钮。"""
+        if busy:
+            self._busy_servers.add(server_id)
+        else:
+            self._busy_servers.discard(server_id)
+        self._update_button_states()
+
+    def _run_async(self, task_fn, *, label: str = "操作", server_id: str = "") -> None:
         """
-        在守护线程中执行 task_fn，期间锁定操作按钮防止重复点击。
-        执行完成后在 UI 线程中恢复按钮状态。
+        在守护线程中执行 task_fn，期间锁定该服务器的操作按钮防止重复点击。
+        不同服务器的操作可以并行执行。
         """
-        if self._busy:
-            self.logger.warning("已有操作正在进行，忽略新请求: %s", label)
+        sid = server_id or self.active_server_id
+        if sid in self._busy_servers:
+            self.logger.warning("该服务器已有操作正在进行，忽略新请求: %s", label)
             return
 
         def _worker() -> None:
@@ -1065,15 +1125,24 @@ class ServerManagerApp:
                 self.logger.error("%s 执行异常: %s", label, e)
                 self.root.after(0, lambda msg=str(e): messagebox.showerror(label, msg))
             finally:
-                self.root.after(0, lambda: self._set_busy(False))
+                self.root.after(0, lambda: self._set_busy(sid, False))
 
-        self._set_busy(True)
-        self._async_thread = threading.Thread(target=_worker, daemon=True, name=label)
-        self._async_thread.start()
+        self._set_busy(sid, True)
+        t = threading.Thread(target=_worker, daemon=True, name=label)
+        t.start()
 
-    def _log_console(self, message: str) -> None:
-        """线程安全地向控制台输出区追加一行文字。"""
+    def _log_console(self, message: str, server_id: str = "") -> None:
+        """线程安全地向指定服务器的控制台缓冲区追加一行，
+        如果是当前激活的服务器则同时显示到 UI。"""
+        sid = server_id or self.active_server_id
+        if sid:
+            with self._console_buffers_lock:
+                buf = self._console_buffers.setdefault(sid, [])
+                buf.append(message)
+
         def _append() -> None:
+            if sid and sid != self.active_server_id:
+                return
             try:
                 self.txt_log.configure(state="normal")
                 self.txt_log.insert("end", message + "\n")
@@ -1082,6 +1151,29 @@ class ServerManagerApp:
             except Exception:
                 pass
         self.root.after(0, _append)
+
+    def _switch_console_to(self, server_id: str) -> None:
+        """切换控制台显示到指定服务器的日志缓冲区"""
+        try:
+            # 更新标题以显示当前服务器名称
+            display_name = ""
+            for s in self.global_cfg.get("servers", []):
+                if isinstance(s, dict) and str(s.get("id")) == server_id:
+                    display_name = str(s.get("display_name") or "")
+                    break
+            label = f"控制台输出 - {display_name}" if display_name else "控制台输出"
+            self._console_label_frame.configure(text=label)
+
+            self.txt_log.configure(state="normal")
+            self.txt_log.delete("1.0", "end")
+            with self._console_buffers_lock:
+                lines = self._console_buffers.get(server_id, [])
+                if lines:
+                    self.txt_log.insert("end", "\n".join(lines) + "\n")
+            self.txt_log.see("end")
+            self.txt_log.configure(state="disabled")
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # 多服务器进程状态辅助
@@ -1107,10 +1199,44 @@ class ServerManagerApp:
 
     def _refresh_buttons(self) -> None:
         """刷新操作按钮状态（在 UI 线程中调用）"""
-        self._set_busy(self._busy)
+        self._update_button_states()
+
+    def _update_button_states(self) -> None:
+        """根据当前服务器运行状态和忙碌状态刷新所有操作按钮。"""
+        server_tab = self.tabs.get("server")
+        if server_tab is None:
+            return
+
+        running = self._is_server_running()
+        busy = self._is_busy()
+
+        try:
+            if busy:
+                server_tab.btn_first_install.configure(state="disabled")
+                server_tab.btn_start.configure(state="disabled")
+                server_tab.btn_stop.configure(state="disabled")
+                server_tab.btn_update_validate.configure(state="disabled")
+                server_tab.btn_update_restart.configure(state="disabled")
+                server_tab.btn_backup_now.configure(state="disabled")
+            elif running:
+                server_tab.btn_first_install.configure(state="disabled")
+                server_tab.btn_start.configure(state="disabled")
+                server_tab.btn_stop.configure(state="normal")
+                server_tab.btn_update_validate.configure(state="disabled")
+                server_tab.btn_update_restart.configure(state="normal")
+                server_tab.btn_backup_now.configure(state="normal")
+            else:
+                server_tab.btn_first_install.configure(state="normal")
+                server_tab.btn_start.configure(state="normal")
+                server_tab.btn_stop.configure(state="disabled")
+                server_tab.btn_update_validate.configure(state="normal")
+                server_tab.btn_update_restart.configure(state="normal")
+                server_tab.btn_backup_now.configure(state="normal")
+        except Exception:
+            pass
 
     def _server_log_reader_for(self, server_id: str) -> None:
-        """后台线程：将指定服务器进程的 stdout 实时写入控制台日志"""
+        """后台线程：将指定服务器进程的 stdout 实时写入该服务器的控制台缓冲区"""
         with self._server_procs_lock:
             p = self._server_procs.get(server_id)
         if not p or not p.stdout:
@@ -1127,15 +1253,17 @@ class ServerManagerApp:
                 stripped = line.rstrip()
                 if hide_ga and "gameanalytics" in stripped.lower():
                     continue
-                self.logger.info(f"[{server_id[:8]}] {stripped}")
+                self._log_console(stripped, server_id=server_id)
         except Exception as e:
-            self.logger.debug(f"[{server_id[:8]}] 日志读取器停止: {e}")
+            self._log_console(f"日志读取器停止: {e}", server_id=server_id)
         finally:
             code: Optional[int] = None
             try:
                 code = p.poll()
                 if code is not None:
-                    self.logger.info(f"[{server_id[:8]}] 服务器已退出，退出码: {code}")
+                    self._log_console(
+                        f"服务器已退出，退出码: {code}", server_id=server_id
+                    )
             except Exception:
                 pass
 
@@ -1157,11 +1285,12 @@ class ServerManagerApp:
         stop_flag = self._stop_requested_flags.get(server_id)
         if stop_flag and stop_flag.is_set():
             return
-        if self._busy:
+        if self._is_busy(server_id):
             return
 
-        self.logger.info(
-            f"[{server_id[:8]}] 服务器以代码 {exit_code} 退出 → {AUTO_RESTART_DELAY_SEC}s 后自动重启..."
+        self._log_console(
+            f"服务器以代码 {exit_code} 退出 → {AUTO_RESTART_DELAY_SEC}s 后自动重启...",
+            server_id=server_id,
         )
 
         def _delayed_restart() -> None:
@@ -1170,7 +1299,7 @@ class ServerManagerApp:
                 cfg = self.config_manager.load_server_config(server_id)
                 self._start_server_for(server_id, cfg)
             except Exception as e:
-                self.logger.error(f"[{server_id[:8]}] 自动重启失败: {e}")
+                self._log_console(f"自动重启失败: {e}", server_id=server_id)
 
         threading.Thread(target=_delayed_restart, daemon=True).start()
 
@@ -1189,11 +1318,13 @@ class ServerManagerApp:
 
             from ..utils.windows import ensure_dependencies, install_asa_certificates, is_admin
             if not is_admin():
-                self.logger.warning("警告：未以管理员身份运行，安装可能失败。")
+                self._log_console("警告：未以管理员身份运行，安装可能失败。", server_id=server_id)
 
+            self._log_console("正在安装依赖...", server_id=server_id)
             ensure_dependencies(self.logger)
             install_asa_certificates(self.logger)
 
+            self._log_console("正在通过 SteamCMD 安装服务器...", server_id=server_id)
             steam = SteamManager(Path(steamcmd_dir))
             steam.update_app(
                 install_dir=Path(cfg["server_dir"]),
@@ -1204,8 +1335,9 @@ class ServerManagerApp:
             )
 
             exe = ark_server_exe(Path(cfg["server_dir"]))
-            self.logger.info(
-                f"服务器 EXE: {exe}  ({'存在' if exe.exists() else '未找到'})"
+            self._log_console(
+                f"服务器 EXE: {exe}  ({'存在' if exe.exists() else '未找到'})",
+                server_id=server_id,
             )
 
         self._run_async(_task, label="首次安装")
@@ -1216,11 +1348,11 @@ class ServerManagerApp:
 
         def _task() -> None:
             self._save_active_server_config()
-            cfg = dict(self.server_cfg)  # 拷贝一份
+            cfg = dict(self.server_cfg)
             steamcmd_dir = self.var_steamcmd_dir.get().strip() or DEFAULT_STEAMCMD_DIR
 
             if cfg.get("update_on_startup"):
-                self.logger.info("启动时更新已开启 → 正在更新服务器...")
+                self._log_console("启动时更新已开启 → 正在更新服务器...", server_id=server_id)
                 self._update_server_install(cfg, steamcmd_dir, validate=None)
 
             if self._is_server_running_for(server_id):
@@ -1263,14 +1395,15 @@ class ServerManagerApp:
             steamcmd_dir = self.var_steamcmd_dir.get().strip() or DEFAULT_STEAMCMD_DIR
 
             if self._is_server_running_for(server_id):
-                self.logger.info("服务器运行中 → 安全停止后更新...")
+                self._log_console("服务器运行中 → 安全停止后更新...", server_id=server_id)
                 stop_flag = self._stop_requested_flags.setdefault(server_id, threading.Event())
                 stop_flag.set()
                 self._stop_server_for(server_id)
 
+            self._log_console("正在更新服务器...", server_id=server_id)
             self._update_server_install(cfg, steamcmd_dir, validate=None)
 
-            self.logger.info("更新完成 → 正在重新启动服务器...")
+            self._log_console("更新完成 → 正在重新启动服务器...", server_id=server_id)
             self._start_server_for(server_id, cfg)
 
         self._run_async(_task, label="更新并重启")
@@ -1289,8 +1422,8 @@ class ServerManagerApp:
 
     def auto_update_test(self) -> None:
         """手动触发自动更新流程（测试用）"""
-        if self._busy:
-            messagebox.showwarning("忙碌", "当前有操作正在进行，请稍后再试。")
+        if self._is_busy():
+            messagebox.showwarning("忙碌", "该服务器有操作正在进行，请稍后再试。")
             return
         self.logger.info("手动触发 → 更新并重启（安全）。")
         self.update_and_restart_safe()
@@ -1314,12 +1447,14 @@ class ServerManagerApp:
         ensure_required_server_settings(cfg, self.app_base, server_id, server_dir, self.logger)
         apply_staging_to_server(self.app_base, server_id, server_dir, self.logger)
 
+        self._reinject_lacc_to_server(server_id, server_dir)
+
         stop_flag = self._stop_requested_flags.setdefault(server_id, threading.Event())
         stop_flag.clear()
 
         cmd = build_server_command(cfg)
-        self.logger.info(f"[{server_id[:8]}] 启动服务器命令:")
-        self.logger.info(" ".join(cmd))
+        self._log_console(f"启动服务器命令:", server_id=server_id)
+        self._log_console(" ".join(cmd), server_id=server_id)
 
         _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         with self._server_procs_lock:
@@ -1354,7 +1489,7 @@ class ServerManagerApp:
             p = self._server_procs.get(server_id)
 
         if not p or p.poll() is not None:
-            self.logger.info(f"[{server_id[:8]}] 服务器未运行。")
+            self._log_console("服务器未运行。", server_id=server_id)
             return
 
         cfg = self._running_server_configs.get(server_id) or self.config_manager.load_server_config(server_id)
@@ -1362,17 +1497,17 @@ class ServerManagerApp:
         if cfg.get("enable_rcon"):
             for rcon_cmd in ("SaveWorld", "DoExit"):
                 try:
-                    self.logger.info(f"[{server_id[:8]}] RCON: {rcon_cmd}")
+                    self._log_console(f"RCON: {rcon_cmd}", server_id=server_id)
                     self._rcon_exec_for(cfg, rcon_cmd, timeout=6.0)
                 except Exception as e:
-                    self.logger.warning(f"[{server_id[:8]}] RCON {rcon_cmd} 失败: {e}")
+                    self._log_console(f"RCON {rcon_cmd} 失败: {e}", server_id=server_id)
 
         t_end = time.time() + 20
         while time.time() < t_end and p.poll() is None:
             time.sleep(0.5)
 
         if p.poll() is None:
-            self.logger.info(f"[{server_id[:8]}] 正在强制终止服务器进程...")
+            self._log_console("正在强制终止服务器进程...", server_id=server_id)
             stop_log = self._stop_log_readers.get(server_id)
             if stop_log:
                 stop_log.set()
@@ -1380,7 +1515,7 @@ class ServerManagerApp:
             try:
                 p.wait(timeout=12)
             except subprocess.TimeoutExpired:
-                self.logger.warning(f"[{server_id[:8]}] terminate() 超时，执行 kill()...")
+                self._log_console("terminate() 超时，执行 kill()...", server_id=server_id)
                 p.kill()
                 p.wait(timeout=5)
 
@@ -1389,12 +1524,12 @@ class ServerManagerApp:
             self._running_server_configs.pop(server_id, None)
             self._stop_log_readers.pop(server_id, None)
 
-        self.logger.info(f"[{server_id[:8]}] 服务器已停止。")
+        self._log_console("服务器已停止。", server_id=server_id)
 
         if cfg.get("backup_on_stop"):
             path = backup_server(cfg, self.app_base, self.logger)
             if path:
-                self.logger.info(f"[{server_id[:8]}] 停止时备份已完成: {path}")
+                self._log_console(f"停止时备份已完成: {path}", server_id=server_id)
 
         restore_baseline_to_server(self.app_base, server_id, Path(cfg["server_dir"]), self.logger)
         self.root.after(0, self._refresh_buttons)
@@ -1417,26 +1552,39 @@ class ServerManagerApp:
             lock_root=self.app_base,
         )
 
+    # ------------------------------------------------------------------
+    # RCON 运行时快照
+    # 防止用户在 GUI 中修改密码/端口后，RCON 用了与运行中服务器不一致的参数
+    # ------------------------------------------------------------------
+
+    def _current_rcon_cfg(self, server_id: str = "") -> Dict[str, Any]:
+        """获取 RCON 连接参数：服务器运行中时使用启动时的快照，否则使用当前配置。"""
+        sid = server_id or self.active_server_id
+        if self._is_server_running_for(sid):
+            runtime_cfg = self._running_server_configs.get(sid)
+            if runtime_cfg:
+                return runtime_cfg
+        return self.server_cfg
+
     def _rcon_exec(self, cmd: str, timeout: float = 4.0) -> str:
-        """发送 RCON 命令到当前选中配置的服务器"""
-        return self._rcon_exec_for(self.server_cfg, cmd, timeout)
+        """发送 RCON 命令到当前选中的服务器（自动选择运行时快照或当前配置）"""
+        cfg = self._current_rcon_cfg()
+        return self._rcon_exec_for(cfg, cmd, timeout)
 
     def _rcon_exec_for(self, cfg: Dict[str, Any], cmd: str, timeout: float = 4.0) -> str:
         """发送一条 RCON 命令到指定配置的服务器"""
-        from ..rcon.client import RCONClient
-        import socket as _socket
+        from ..rcon.protocol import RCONProtocol
 
-        host = cfg.get("rcon_host") or "127.0.0.1"
-        port = int(cfg.get("rcon_port", 27020))
+        host = (cfg.get("rcon_host") or DEFAULT_RCON_HOST).strip()
+        port = int(cfg.get("rcon_port", DEFAULT_RCON_PORT))
         password = (cfg.get("admin_password") or "").strip()
 
-        client = RCONClient(host=host, port=port, password=password)
-        proto = client._protocol
-        proto._socket = None
-        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect((host, port))
-        proto._socket = sock
+        if not password:
+            raise RuntimeError("管理员密码为空，无法进行 RCON 认证。")
+
+        proto = RCONProtocol(host, port)
+        if not proto.connect(timeout=int(max(timeout, 1))):
+            raise RuntimeError(f"RCON 连接失败 ({host}:{port})，服务器是否在运行？")
         try:
             if not proto.authenticate(password):
                 raise RuntimeError(f"RCON 认证失败 ({host}:{port})，请检查管理员密码。")
@@ -1449,6 +1597,46 @@ class ServerManagerApp:
     # 自动更新调度器（每服务器独立）
     # ------------------------------------------------------------------
 
+    def _init_all_auto_update_schedulers(self) -> None:
+        """应用启动时，为所有已启用自动更新的服务器启动调度器"""
+        servers = self.global_cfg.get("servers") or []
+        for server in servers:
+            if not isinstance(server, dict):
+                continue
+            server_id = str(server.get("id") or "").strip()
+            if not server_id:
+                continue
+            cfg = self.config_manager.load_server_config(server_id)
+            if cfg.get("auto_update_restart", False):
+                self._start_auto_update_scheduler_for(server_id, cfg)
+
+    def _start_auto_update_scheduler_for(self, server_id: str, cfg: Dict[str, Any]) -> None:
+        """为指定服务器启动自动更新调度线程"""
+        old_stop = self._auto_update_stops.get(server_id)
+        if old_stop:
+            old_stop.set()
+
+        new_stop = threading.Event()
+        self._auto_update_stops[server_id] = new_stop
+        t = threading.Thread(
+            target=self._auto_update_loop_for,
+            args=(server_id, new_stop),
+            daemon=True,
+            name=f"AutoUpdate-{server_id[:8]}",
+        )
+        self._auto_update_threads[server_id] = t
+        t.start()
+
+        schedule_time = cfg.get("auto_update_time") or "03:00"
+        self.logger.info(f"[{server_id[:8]}] 自动更新调度器已启动 (计划时间: {schedule_time})。")
+
+    def _stop_auto_update_scheduler_for(self, server_id: str) -> None:
+        """停止指定服务器的自动更新调度线程"""
+        old_stop = self._auto_update_stops.get(server_id)
+        if old_stop:
+            old_stop.set()
+            self.logger.info(f"[{server_id[:8]}] 自动更新调度器已停止。")
+
     def _sync_auto_update_scheduler(self) -> None:
         """根据当前配置启动或停止该服务器的自动更新调度线程"""
         try:
@@ -1457,28 +1645,15 @@ class ServerManagerApp:
             return
 
         server_id = self.active_server_id
+        if not server_id:
+            return
+
         enabled = bool(self.server_cfg.get("auto_update_restart", False))
 
         if enabled:
-            old_stop = self._auto_update_stops.get(server_id)
-            if old_stop:
-                old_stop.set()
-            new_stop = threading.Event()
-            self._auto_update_stops[server_id] = new_stop
-            t = threading.Thread(
-                target=self._auto_update_loop_for,
-                args=(server_id, new_stop),
-                daemon=True,
-                name=f"AutoUpdate-{server_id[:8]}",
-            )
-            self._auto_update_threads[server_id] = t
-            t.start()
-            self.logger.info(f"[{server_id[:8]}] 自动更新调度器已启动。")
+            self._start_auto_update_scheduler_for(server_id, self.server_cfg)
         else:
-            old_stop = self._auto_update_stops.get(server_id)
-            if old_stop:
-                old_stop.set()
-            self.logger.info(f"[{server_id[:8]}] 自动更新调度器已停止。")
+            self._stop_auto_update_scheduler_for(server_id)
 
     def _auto_update_loop_for(self, server_id: str, stop_event: threading.Event) -> None:
         """后台线程：等待到计划时间后触发指定服务器的更新重启"""
@@ -1507,8 +1682,8 @@ class ServerManagerApp:
                 return
             if stop_event.is_set():
                 return
-            if self._busy:
-                self.logger.info(f"[{server_id[:8]}] 自动更新已跳过：应用正忙。")
+            if self._is_busy(server_id):
+                self.logger.info(f"[{server_id[:8]}] 自动更新已跳过：该服务器正忙。")
                 continue
 
             self.logger.info(f"[{server_id[:8]}] 自动更新触发 → 更新并重启（安全）。")
@@ -1523,21 +1698,23 @@ class ServerManagerApp:
                 self._update_server_install(cfg_now, steamcmd_dir, validate=None)
                 self._start_server_for(sid, cfg_now)
 
-            self._run_async(_do_update, label=f"自动更新-{server_id[:8]}")
+            self._run_async(_do_update, label=f"自动更新-{server_id[:8]}", server_id=server_id)
     
     def send_rcon(self) -> None:
         """Send RCON command."""
         cmd = self.var_rcon_cmd.get().strip()
         if not cmd:
             return
+        server_id = self.active_server_id
 
         def _task() -> None:
-            self.logger.info(f"RCON> {cmd}")
+            self._save_active_server_config()
+            self._log_console(f"RCON> {cmd}", server_id=server_id)
             try:
                 out = self._rcon_exec(cmd, timeout=5.0)
-                self.logger.info(out if out else "(无响应)")
+                self._log_console(out if out else "(无响应)", server_id=server_id)
             except Exception as e:
-                self.logger.error(f"RCON 错误: {e}")
+                self._log_console(f"RCON 错误: {e}", server_id=server_id)
             self.root.after(0, lambda: self.var_rcon_cmd.set(""))
 
         self._run_async(_task, label="RCON")
@@ -1560,43 +1737,214 @@ class ServerManagerApp:
     
     def load_gameusersettings(self) -> None:
         """Load GameUserSettings.ini for editing."""
-        self.logger.info("Loading GameUserSettings.ini")
-    
+        if not self.active_server_id:
+            messagebox.showwarning("提示", "请先选择一个服务器配置。")
+            return
+        stage_gus, _ = staging_paths(self.app_base, self.active_server_id)
+        if not stage_gus.exists():
+            server_dir = Path(self.var_server_dir.get().strip())
+            live = server_dir / GAMEUSERSETTINGS_REL
+            if live.exists():
+                stage_gus.parent.mkdir(parents=True, exist_ok=True)
+                import shutil
+                shutil.copy2(live, stage_gus)
+            else:
+                stage_gus.parent.mkdir(parents=True, exist_ok=True)
+                stage_gus.write_text("", encoding="utf-8")
+        self._ini_load_file(stage_gus, "GameUserSettings.ini")
+
     def load_game_ini(self) -> None:
         """Load Game.ini for editing."""
-        self.logger.info("Loading Game.ini")
-    
+        if not self.active_server_id:
+            messagebox.showwarning("提示", "请先选择一个服务器配置。")
+            return
+        _, stage_game = staging_paths(self.app_base, self.active_server_id)
+        if not stage_game.exists():
+            server_dir = Path(self.var_server_dir.get().strip())
+            live = server_dir / GAME_INI_REL
+            if live.exists():
+                stage_game.parent.mkdir(parents=True, exist_ok=True)
+                import shutil
+                shutil.copy2(live, stage_game)
+            else:
+                stage_game.parent.mkdir(parents=True, exist_ok=True)
+                stage_game.write_text("", encoding="utf-8")
+        self._ini_load_file(stage_game, "Game.ini")
+
+    def _ini_load_file(self, path: Path, display_name: str) -> None:
+        """Load and parse an INI file, then refresh the tree view."""
+        parser = INIParser()
+        if not parser.parse_file(path):
+            messagebox.showerror("加载失败", f"无法解析 INI 文件:\n{path}")
+            return
+        self._ini_parser = parser
+        self._ini_loaded_path = path
+        self._ini_loaded_name = display_name
+
+        ini_tab = self.tabs.get("ini")
+        if ini_tab:
+            ini_tab.lbl_ini_target.configure(text=f"{display_name}  ({path})")
+
+        self.var_ini_section.set("")
+        self.var_ini_key.set("")
+        self.var_ini_value.set("")
+        self._ini_refresh_tree()
+        self.logger.info("已加载 INI 文件: %s", path)
+
     def open_loaded_ini(self) -> None:
-        """Open the currently loaded INI file."""
-        self.logger.debug("Opening loaded INI file")
-    
+        """Open the currently loaded INI file in the default text editor."""
+        if not self._ini_loaded_path or not self._ini_loaded_path.exists():
+            messagebox.showwarning("提示", "尚未加载任何 INI 文件。")
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(str(self._ini_loaded_path))  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["xdg-open", str(self._ini_loaded_path)])
+        except Exception as e:
+            messagebox.showerror("打开失败", f"无法打开文件: {e}")
+
     def _ini_resync_from_upstream(self) -> None:
-        """Resync INI staging from upstream."""
-        self.logger.debug("Resyncing INI from upstream")
-    
+        """Copy the server's actual INI files to staging and reload the current one."""
+        if not self.active_server_id:
+            messagebox.showwarning("提示", "请先选择一个服务器配置。")
+            return
+        server_dir = Path(self.var_server_dir.get().strip())
+        stage_gus, stage_game = staging_paths(self.app_base, self.active_server_id)
+        import shutil
+
+        live_gus = server_dir / GAMEUSERSETTINGS_REL
+        if live_gus.exists():
+            stage_gus.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(live_gus, stage_gus)
+
+        live_game = server_dir / GAME_INI_REL
+        if live_game.exists():
+            stage_game.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(live_game, stage_game)
+
+        if self._ini_loaded_path and self._ini_loaded_path.exists():
+            self._ini_load_file(self._ini_loaded_path, self._ini_loaded_name)
+            messagebox.showinfo("同步完成", "已从上游重新整合 INI 文件。")
+        else:
+            messagebox.showinfo("同步完成", "已从服务器目录复制 INI 到 staging。\n请点击加载按钮查看。")
+
     def _ini_refresh_tree(self) -> None:
-        """Refresh the INI tree view based on filter."""
-        self.logger.debug("Refreshing INI tree")
-    
+        """Refresh the INI tree view based on current parser data and filter."""
+        ini_tab = self.tabs.get("ini")
+        if not ini_tab or not self._ini_parser:
+            return
+
+        tree = ini_tab.tree_ini
+        tree.delete(*tree.get_children())
+
+        filter_text = (self.var_ini_filter.get() or "").strip().lower()
+
+        for section, keys in self._ini_parser.sections.items():
+            section_matches = not filter_text or filter_text in section.lower()
+            child_items = []
+            for key, value in keys.items():
+                if filter_text and not section_matches:
+                    if filter_text not in key.lower() and filter_text not in value.lower():
+                        continue
+                child_items.append((key, value))
+
+            if not child_items and not section_matches:
+                continue
+
+            section_id = tree.insert(
+                "", "end",
+                text=f"[{section}]",
+                values=(section, "", ""),
+                open=bool(filter_text),
+            )
+            for key, value in child_items:
+                tree.insert(
+                    section_id, "end",
+                    text=key,
+                    values=(section, key, value),
+                )
+
     def _ini_tree_select(self) -> None:
-        """Handle INI tree selection."""
-        self.logger.debug("INI tree item selected")
-    
+        """Handle INI tree selection — populate the edit panel."""
+        ini_tab = self.tabs.get("ini")
+        if not ini_tab:
+            return
+        tree = ini_tab.tree_ini
+        selection = tree.selection()
+        if not selection:
+            return
+        item = selection[0]
+        values = tree.item(item, "values")
+        if not values or len(values) < 3:
+            return
+        section, key, value = values[0], values[1], values[2]
+        self.var_ini_section.set(section)
+        self.var_ini_key.set(key)
+        self.var_ini_value.set(value)
+
     def _ini_update_value(self) -> None:
         """Update the selected INI value."""
-        self.logger.debug("Updating INI value")
-    
+        if not self._ini_parser:
+            messagebox.showwarning("提示", "请先加载一个 INI 文件。")
+            return
+        section = self.var_ini_section.get().strip()
+        key = self.var_ini_key.get().strip()
+        value = self.var_ini_value.get()
+        if not section or not key:
+            messagebox.showwarning("提示", "请在左侧树中选择一个键值条目。")
+            return
+        self._ini_parser.set(section, key, value)
+        self._ini_refresh_tree()
+        self.logger.info("INI 值已更新: [%s] %s = %s", section, key, value)
+
     def _ini_delete_entry(self) -> None:
         """Delete the selected INI entry."""
-        self.logger.debug("Deleting INI entry")
-    
+        if not self._ini_parser:
+            messagebox.showwarning("提示", "请先加载一个 INI 文件。")
+            return
+        section = self.var_ini_section.get().strip()
+        key = self.var_ini_key.get().strip()
+        if not section or not key:
+            messagebox.showwarning("提示", "请在左侧树中选择一个键值条目。")
+            return
+        if not self._ini_parser.delete(section, key):
+            messagebox.showwarning("提示", f"未找到条目: [{section}] {key}")
+            return
+        self.var_ini_section.set("")
+        self.var_ini_key.set("")
+        self.var_ini_value.set("")
+        self._ini_refresh_tree()
+        self.logger.info("INI 条目已删除: [%s] %s", section, key)
+
     def _ini_add_entry(self) -> None:
         """Add a new INI entry."""
-        self.logger.debug("Adding INI entry")
-    
+        if not self._ini_parser:
+            messagebox.showwarning("提示", "请先加载一个 INI 文件。")
+            return
+        section = self.var_ini_add_section.get().strip()
+        key = self.var_ini_add_key.get().strip()
+        value = self.var_ini_add_value.get()
+        if not section or not key:
+            messagebox.showwarning("提示", "部分和键不能为空。")
+            return
+        self._ini_parser.set(section, key, value)
+        self.var_ini_add_section.set("")
+        self.var_ini_add_key.set("")
+        self.var_ini_add_value.set("")
+        self._ini_refresh_tree()
+        self.logger.info("INI 条目已添加: [%s] %s = %s", section, key, value)
+
     def _ini_save_changes(self) -> None:
-        """Save all INI changes."""
-        self.logger.info("Saving INI changes")
+        """Save all INI changes to the staging file."""
+        if not self._ini_parser or not self._ini_loaded_path:
+            messagebox.showwarning("提示", "请先加载一个 INI 文件。")
+            return
+        if self._ini_parser.save_file(self._ini_loaded_path):
+            messagebox.showinfo("保存成功", f"INI 更改已保存到:\n{self._ini_loaded_path}")
+            self.logger.info("INI 文件已保存: %s", self._ini_loaded_path)
+        else:
+            messagebox.showerror("保存失败", f"无法保存 INI 文件:\n{self._ini_loaded_path}")
     
     def open_server_config_dir(self) -> None:
         """Open the server configuration directory."""
@@ -1615,11 +1963,261 @@ class ServerManagerApp:
         except Exception as e:
             self.logger.error(f"Failed to open folder: {e}")
     
+    # ------------------------------------------------------------------
+    # 跨服聊天 (LACC WebSocket)
+    # ------------------------------------------------------------------
+
+    def _start_chat_server(self) -> None:
+        """启动 LACC WebSocket 中继服务器"""
+        if self._chat_server and self._chat_server.is_running:
+            self.logger.info("LACC WebSocket 服务器已在运行中")
+            return
+
+        try:
+            port = int(self.var_chat_ws_port.get().strip() or "8000")
+        except ValueError:
+            messagebox.showwarning("配置错误", "WebSocket 端口必须是数字。")
+            return
+
+        token = self.var_chat_token.get().strip()
+        cluster_key = self.var_chat_cluster_key.get().strip()
+
+        self._chat_server = LACCWebSocketServer(
+            host="0.0.0.0",
+            port=port,
+            token=token,
+            cluster_key=cluster_key,
+            on_message=self._on_chat_message,
+            on_connect=self._on_chat_client_connect,
+            on_disconnect=self._on_chat_client_disconnect,
+        )
+        self._chat_server.start()
+
+        chat_tab = self.tabs.get("chat")
+        if chat_tab:
+            self.root.after(0, lambda: chat_tab.update_server_status(True))
+            self.root.after(0, lambda: chat_tab.append_system_message(
+                f"WebSocket 中继服务器已启动 (端口: {port})"
+            ))
+
+        self.logger.info("LACC WebSocket 服务器已启动 (端口: %d)", port)
+        self._save_active_server_config()
+
+    def _stop_chat_server(self) -> None:
+        """停止 LACC WebSocket 中继服务器"""
+        if not self._chat_server or not self._chat_server.is_running:
+            return
+
+        self._chat_server.stop()
+        self._chat_server = None
+
+        chat_tab = self.tabs.get("chat")
+        if chat_tab:
+            self.root.after(0, lambda: chat_tab.update_server_status(False))
+            self.root.after(0, lambda: chat_tab.append_system_message(
+                "WebSocket 中继服务器已停止"
+            ))
+
+        self.logger.info("LACC WebSocket 服务器已停止")
+
+    def _send_chat_message(self) -> None:
+        """从管理器向所有已连接服务器广播消息"""
+        chat_tab = self.tabs.get("chat")
+        if not chat_tab:
+            return
+
+        text = chat_tab.var_chat_input.get().strip()
+        if not text:
+            return
+
+        if not self._chat_server or not self._chat_server.is_running:
+            messagebox.showwarning("未启动", "WebSocket 中继服务器未运行，请先启动。")
+            return
+
+        self._chat_server.send_admin_message(text)
+        chat_tab.var_chat_input.set("")
+
+    def _on_chat_message(self, msg) -> None:
+        """收到聊天消息时的回调（从 WebSocket 线程调用）"""
+        chat_tab = self.tabs.get("chat")
+        if chat_tab:
+            self.root.after(0, lambda m=msg: chat_tab.append_chat_message(m))
+
+    def _on_chat_client_connect(self, name: str) -> None:
+        """客户端连接时的回调"""
+        chat_tab = self.tabs.get("chat")
+        if chat_tab and self._chat_server:
+            clients = self._chat_server.get_connected_clients()
+            self.root.after(0, lambda: chat_tab.refresh_client_list(clients))
+            self.root.after(0, lambda: chat_tab.append_system_message(
+                f"服务器 [{name}] 已连接"
+            ))
+
+    def _on_chat_client_disconnect(self, name: str) -> None:
+        """客户端断开时的回调"""
+        chat_tab = self.tabs.get("chat")
+        if chat_tab and self._chat_server:
+            clients = self._chat_server.get_connected_clients()
+            self.root.after(0, lambda: chat_tab.refresh_client_list(clients))
+            self.root.after(0, lambda: chat_tab.append_system_message(
+                f"服务器 [{name}] 已断开"
+            ))
+
+    def _reinject_lacc_to_server(self, server_id: str, server_dir: Path) -> None:
+        """在 apply_staging_to_server 之后，用原始文本直接将 LACC 配置
+        注入到服务器的 GameUserSettings.ini 中，避免 UE5 INI 解析器
+        将 URL 中的 :// 截断。"""
+        stage_gus, _ = staging_paths(self.app_base, server_id)
+        if not stage_gus.exists():
+            return
+
+        import re
+        content = stage_gus.read_text(encoding="utf-8-sig")
+        match = re.search(r"\[LACC\]\s*\n((?:[^\[]*\n?)*)", content)
+        if not match:
+            return
+
+        lacc_body = match.group(1)
+        kv: Dict[str, str] = {}
+        for line in lacc_body.splitlines():
+            stripped = line.strip()
+            if "=" in stripped:
+                k, v = stripped.split("=", 1)
+                kv[k.strip()] = v.strip()
+
+        ws_url = kv.get("URL", "").strip('"')
+        token = kv.get("Token", "")
+        name = kv.get("Name", "").strip('"')
+
+        if not ws_url:
+            return
+
+        inject_lacc_to_server_config(
+            server_dir, ws_url, token, name, self.logger
+        )
+
+    def _auto_configure_lacc(self) -> None:
+        """自动为所有服务器配置 LACC mod"""
+        servers = self.global_cfg.get("servers") or []
+        if not servers:
+            messagebox.showwarning("无服务器", "没有可配置的服务器。")
+            return
+
+        try:
+            ws_port = int(self.var_chat_ws_port.get().strip() or "8000")
+        except ValueError:
+            messagebox.showwarning("配置错误", "WebSocket 端口必须是数字。")
+            return
+
+        token = self.var_chat_token.get().strip()
+        cluster_key = self.var_chat_cluster_key.get().strip()
+
+        ws_url = f"ws://127.0.0.1:{ws_port}"
+
+        configured_count = 0
+        for server in servers:
+            if not isinstance(server, dict):
+                continue
+            sid = str(server.get("id") or "").strip()
+            if not sid:
+                continue
+
+            display_name = str(server.get("display_name") or sid)
+            cfg = self.config_manager.load_server_config(sid)
+
+            # 添加 LACC mod ID 到 mods 列表
+            mods_raw = str(cfg.get("mods") or "")
+            mod_ids = [m.strip() for m in mods_raw.split(",") if m.strip()]
+            if LACC_MOD_ID not in mod_ids:
+                mod_ids.append(LACC_MOD_ID)
+                cfg["mods"] = ",".join(mod_ids)
+                self.config_manager.save_server_config(sid, cfg)
+
+            # 写入 LACC INI 配置到 staging 目录
+            server_dir = Path(str(cfg.get("server_dir") or ""))
+            self._inject_lacc_ini(
+                sid, server_dir, ws_url, token, display_name
+            )
+
+            configured_count += 1
+
+        # 刷新当前 UI 显示的 mods
+        if self.active_server_id:
+            self.server_cfg = self.config_manager.load_server_config(self.active_server_id)
+            server_tab = self.tabs.get("server")
+            mods_editor = getattr(server_tab, "txt_mods", None) if server_tab else None
+            if mods_editor is not None:
+                try:
+                    mods_editor.delete("1.0", "end")
+                    mods_editor.insert("1.0", str(self.server_cfg.get("mods") or ""))
+                except Exception:
+                    pass
+
+        messagebox.showinfo(
+            "LACC 配置完成",
+            f"已为 {configured_count} 个服务器配置 LACC mod (ID: {LACC_MOD_ID})。\n"
+            f"WebSocket URL: {ws_url}\n\n"
+            f"配置已写入各服务器的 GameUserSettings.ini (staging)。\n"
+            f"下次启动服务器时将生效。"
+        )
+
+    def _inject_lacc_ini(
+        self,
+        server_id: str,
+        server_dir: Path,
+        ws_url: str,
+        token: str,
+        map_name: str,
+    ) -> None:
+        """将 LACC 配置写入服务器的 GameUserSettings.ini (staging 目录)"""
+        staging_dir = self.storage.get_staging_dir(server_id)
+        ini_path = staging_dir / "GameUserSettings.ini"
+
+        lacc_section = (
+            f"\n[LACC]\n"
+            f'URL="{ws_url}"\n'
+            f"Token={token}\n"
+            f'Name="{map_name}"\n'
+            f"GlobalChatMode=2\n"
+        )
+
+        try:
+            if ini_path.exists():
+                content = ini_path.read_text(encoding="utf-8-sig")
+            else:
+                content = ""
+
+            if "[LACC]" in content:
+                import re
+                content = re.sub(
+                    r"\[LACC\][^\[]*",
+                    lacc_section.lstrip("\n") + "\n",
+                    content,
+                    count=1,
+                )
+            else:
+                content = content.rstrip() + "\n" + lacc_section
+
+            ini_path.parent.mkdir(parents=True, exist_ok=True)
+            ini_path.write_text(content, encoding="utf-8")
+            self.logger.info(
+                "[%s] LACC INI 配置已写入: %s", server_id[:8], ini_path
+            )
+        except Exception as e:
+            self.logger.error(
+                "[%s] 写入 LACC INI 配置失败: %s", server_id[:8], e
+            )
+
     def close(self) -> None:
         """Close the application."""
         try:
             self._autosave_now()
         except Exception:
             pass
+        if self._chat_server and self._chat_server.is_running:
+            try:
+                self._chat_server.stop()
+            except Exception:
+                pass
         self.logger.info("Closing application")
         self.root.destroy()

@@ -120,6 +120,7 @@ def build_exe(onefile=True, windowed=True, clean=False, upx=True):
         "PIL",
         "darkdetect",
         "packaging",
+        "websockets",
     ]
     for imp in hidden_imports:
         cmd.extend(["--hidden-import", imp])

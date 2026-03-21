@@ -88,6 +88,12 @@ class ConfigManager:
             "last_selected_server_id": "",
             "start_on_startup": False,
             "servers": [],
+            # ---- 跨服聊天 (LACC) ----
+            "chat_enable": False,
+            "chat_ws_port": 8000,
+            "chat_token": "",
+            "chat_cluster_key": "",
+            "chat_auto_start": False,
         }
 
     def default_server_config(self) -> Dict[str, Any]:

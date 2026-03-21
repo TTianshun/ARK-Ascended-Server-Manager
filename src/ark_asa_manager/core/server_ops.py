@@ -225,6 +225,53 @@ def apply_staging_to_server(
         logger.info("已应用 staging: Game.ini")
 
 
+def inject_lacc_to_server_config(
+    server_dir: Path,
+    ws_url: str,
+    token: str,
+    name: str,
+    logger: logging.Logger,
+) -> None:
+    """
+    使用原始文本将 LACC 配置直接写入服务器实际 GameUserSettings.ini。
+
+    绕过 INIParser，避免 UE5 引擎的 INI 解析器将 // 视为注释导致 URL 被截断。
+    在 apply_staging_to_server 之后调用，确保游戏进程启动前文件内容正确。
+    """
+    config_path = server_dir / GAMEUSERSETTINGS_REL
+    if not config_path.exists():
+        logger.debug("inject_lacc: 目标文件不存在，跳过: %s", config_path)
+        return
+
+    import re as _re
+
+    lacc_block = (
+        f"[LACC]\n"
+        f'URL="{ws_url}"\n'
+        f"Token={token}\n"
+        f'Name="{name}"\n'
+        f"GlobalChatMode=2\n"
+    )
+
+    try:
+        content = config_path.read_text(encoding="utf-8-sig")
+
+        if "[LACC]" in content:
+            content = _re.sub(
+                r"\[LACC\][^\[]*",
+                lacc_block + "\n",
+                content,
+                count=1,
+            )
+        else:
+            content = content.rstrip() + "\n\n" + lacc_block
+
+        config_path.write_text(content, encoding="utf-8")
+        logger.info("LACC 配置已直接注入服务器 INI: %s", config_path)
+    except Exception as e:
+        logger.error("注入 LACC 配置失败: %s", e)
+
+
 def restore_baseline_to_server(
     app_base: Path,
     server_id: str,

@@ -79,6 +79,7 @@ jobs:
             --name "ARK-ASA-Manager" `
             --icon ".\assets\app.ico" `
             --add-data ".\assets;assets" `
+            --hidden-import websockets `
             ".\RUN.py"
 
           if (!(Test-Path "dist\ARK-ASA-Manager.exe")) {

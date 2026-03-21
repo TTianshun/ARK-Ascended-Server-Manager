@@ -8,6 +8,7 @@ from .advanced import AdvancedTab
 from .rcon import RconTab
 from .discord import DiscordTab
 from .ini_editor import IniEditorTab
+from .chat import ChatTab
 
 __all__ = [
     "BaseTab",
@@ -16,4 +17,5 @@ __all__ = [
     "RconTab",
     "DiscordTab",
     "IniEditorTab",
+    "ChatTab",
 ]
